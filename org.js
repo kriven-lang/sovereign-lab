@@ -3,16 +3,23 @@
    Client-side hiding is not security. See docs/ORG_SETUP.md. */
 (function(){
 'use strict';
-const state={orgId:'',member:null,reviews:[],selected:null,own:null,other:null,comments:[],members:[],draft:{},loading:false,error:'',message:''};
+const state={orgId:'',member:null,reviews:[],selected:null,own:null,other:null,comments:[],members:[],draft:{},assessmentStep:0,editingSummary:false,assessmentError:'',assessmentMessage:'',loading:false,error:'',message:''};
 let sdk=null;
 const cloud=()=>window.SOVEREIGN_CLOUD;
 const me=()=>cloud()?.user;
 const caps=()=>window.SOVEREIGN_DATA?.capabilities||[];
+const rubric=()=>window.SOVEREIGN_RUBRIC;
+const hasScore=entry=>entry?.score!==null&&entry?.score!==undefined&&entry?.score!=='';
+const hasEvidence=entry=>String(entry?.evidence||'').trim().length>=12;
 const esc=v=>String(v??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const notice=(message,warning=false)=>'<div class="notice'+(warning?' warning':'')+'">'+esc(message)+'</div>';
 const path=(...p)=>['organizations',state.orgId,...p];
 const isHr=()=>['hr','admin'].includes(state.member?.role);
 const isParticipant=r=>r&&(r.employeeUid===me()?.uid||r.managerUid===me()?.uid);
+function clearSelection(){
+ state.selected=null;state.own=null;state.other=null;state.comments=[];state.draft={};
+ state.assessmentStep=0;state.editingSummary=false;state.assessmentError='';state.assessmentMessage='';
+}
 function notify(){window.dispatchEvent(new CustomEvent('sovereign-org-change'))}
 function error(err){state.error=err?.message||String(err);state.loading=false;notify();}
 async function prepare(){
@@ -33,7 +40,7 @@ async function connect(orgId){
   const snap=await sdk.getDoc(dref('members',me().uid));
   if(!snap.exists()||snap.data().active!==true)throw Error('You do not have an active membership for this organization. Ask HR for an invitation.');
   if(snap.data().email?.toLowerCase()!==me().email?.toLowerCase())throw Error('Your Google identity does not match the approved membership.');
-  state.member=snap.data();state.selected=null;state.own=null;state.other=null;state.draft={};
+  state.member=snap.data();clearSelection();
   await refresh();
   if(isHr())await loadMembers();
   state.message='Membership verified. Reviews are limited to your authorized scope.';
@@ -73,28 +80,38 @@ async function createReview(employeeUid,managerUid,cycle){
 }
 async function openReview(id){
  await prepare();
+ const orgId=state.orgId,uid=me().uid;
  const snap=await sdk.getDoc(dref('reviews',id));
+ if(state.orgId!==orgId||me()?.uid!==uid)return;
  if(!snap.exists())throw Error('Review does not exist or is not authorized.');
- state.selected={id,...snap.data()};state.own=null;state.other=null;state.comments=[];state.draft={};
- const r=state.selected,uid=me().uid;
+ clearSelection();
+ const r=state.selected={id,...snap.data()};
  if(isParticipant(r)){
   const mine=await sdk.getDoc(dref('reviews',id,'submissions',uid));
-  if(mine.exists()){state.own=mine.data();state.draft=JSON.parse(JSON.stringify(state.own.ratings||{}));}
+  if(state.selected!==r)return;
+  if(mine.exists()){
+   state.own=mine.data();state.draft=JSON.parse(JSON.stringify(state.own.ratings||{}));
+   const next=caps().findIndex(c=>!hasScore(state.draft[c.id])||!hasEvidence(state.draft[c.id]));
+   state.assessmentStep=next===-1?caps().length:next;
+  }
  }
- if(isParticipant(r)||isHr()){
+ if(isParticipant(r)?state.own?.submitted:isHr()){
   // The other participant's data can be fetched ONLY after both have submitted.
   try{
    const ids=isParticipant(r)?[uid===r.employeeUid?r.managerUid:r.employeeUid]:[r.employeeUid,r.managerUid];
    const snapshots=await Promise.all(ids.map(i=>sdk.getDoc(dref('reviews',id,'submissions',i))));
+   if(state.selected!==r)return;
    if(isParticipant(r)){
     state.other=snapshots[0].exists()?snapshots[0].data():null;
    }else if(snapshots.every(s=>s.exists())){
     state.own=snapshots[0].data();state.other=snapshots[1].data();
    }
   }catch(err){if(err?.code!=='permission-denied')console.info('Second submission not yet available',err)}
+  if(state.selected!==r)return;
   if(state.own?.submitted&&state.other?.submitted){
    try{
     const entries=await sdk.getDocs(crefs('reviews',id,'discussion'));
+    if(state.selected!==r)return;
     state.comments=entries.docs.map(d=>({id:d.id,...d.data()})).sort((x,y)=>(x.createdAt?.seconds||0)-(y.createdAt?.seconds||0));
    }catch(err){console.info('Discussion not available',err)}
   }
@@ -105,7 +122,7 @@ function collectDraft(){
  const d={};
  for(const c of caps()){
   const entry=state.draft[c.id];
-  if(entry&&entry.score!==null&&entry.score!==undefined&&entry.score!==''){
+  if(hasScore(entry)){
    const number=Number(entry.score);
    if(!Number.isInteger(number)||number<0||number>4)throw Error('Invalid proficiency for '+c.name);
    d[c.id]={score:number,evidence:String(entry.evidence||'').slice(0,2000)};
@@ -119,15 +136,23 @@ async function saveDraft(submit){
  if(state.own?.submitted)throw Error('This submission is locked.');
  const ratings=collectDraft(),keys=Object.keys(ratings);
  if(submit){
+  if(state.assessmentStep!==caps().length)throw Error('Review the assessment before submitting.');
   if(keys.length<3)throw Error('Assess at least three capabilities before submitting.');
-  for(const id of keys)if(ratings[id].evidence.trim().length<12)throw Error('Provide specific supporting evidence (at least 12 characters) for '+id);
+  for(const c of caps())if(ratings[c.id]&&!hasEvidence(ratings[c.id]))throw Error('Provide at least 12 characters of evidence for '+c.name+'.');
   if(!confirm('Submit and permanently lock your independent assessment? You cannot edit it after submission.'))return;
  }
- await sdk.setDoc(dref('reviews',r.id,'submissions',me().uid),{
-  authorUid:me().uid,ratings,submitted:!!submit,updatedAt:sdk.serverTimestamp()
+ const authorUid=me().uid;
+ await sdk.setDoc(dref('reviews',r.id,'submissions',authorUid),{
+  authorUid,ratings,submitted:!!submit,updatedAt:sdk.serverTimestamp()
  });
- state.message=submit?'Submission locked. The comparison unlocks only when both participants submit.':'Draft saved privately.';
- await openReview(r.id);
+ if(state.selected!==r||me()?.uid!==authorUid)return;
+ state.own={authorUid,ratings,submitted:!!submit};
+ if(submit){
+  state.message='Submission locked. The comparison unlocks only when both participants submit.';
+  await openReview(r.id);
+ }else{
+  state.assessmentMessage='Draft saved privately.';
+ }
 }
 async function discuss(text){
  if(!state.selected||!state.own?.submitted||!state.other?.submitted)throw Error('Both submissions must be locked before reconciliation.');
@@ -151,13 +176,15 @@ async function finalize(){
 }
 function statusLine(r){return esc(r.cycle)+' · '+esc(r.status==='finalized'?'Finalized':'Open')}
 function render(){
- if(state.error){const msg=state.error;state.error='';return '<div class="portal-hero"><div class="eyebrow">ORGANIZATION WORKSPACE</div><h1 class="headline">Access & <em>reviews.</em></h1>'+notice(msg,true)+startForm()+'</div>'}
+ const issue=state.error?notice(state.error,true):'';
+ state.error='';
+ if(!state.member&&issue)return '<div class="portal-hero"><div class="eyebrow">ORGANIZATION WORKSPACE</div><h1 class="headline">Access & <em>reviews.</em></h1>'+issue+startForm()+'</div>';
  if(!state.member)return '<div class="portal-hero"><div class="eyebrow">ORGANIZATION WORKSPACE</div><h1 class="headline">Verified <em>membership.</em></h1><p class="lead">Enter your HR-provided organization ID. Your Google account must match an approved member record.</p>'+startForm()+'</div>';
  const header='<div class="portal-hero"><div class="eyebrow">ORGANIZATION / '+esc(state.orgId)+' · '+esc(state.member.role?.toUpperCase())+'</div>'+
  '<h1 class="headline">Review with <em>evidence.</em></h1><p class="lead">Draft independently. Submit only when ready. Both assessments become visible together, followed by a documented discussion.</p>'+
  '<div class="btnrow"><button class="action-btn secondary" data-org="refresh">Refresh reviews</button>'+
  '<button class="action-btn secondary" data-org="leave">Switch organization</button></div>'+
- (state.message?notice(state.message):'')+
+ issue+(state.message?notice(state.message):'')+
  '<div class="notice warning"><strong>Integrity and instruction adherence:</strong> Review observed, context-specific conduct—not inherent morality or blind obedience. Legitimate dissent and refusal of unsafe directions must not be penalized. Scores require supporting evidence and can be challenged.</div>';
  const hr=isHr()?hrPanel():'';
  const list='<div class="section-head"><h2>Review assignments</h2></div><div class="card">'+
@@ -178,8 +205,8 @@ function hrPanel(){
  '<div class="field"><label>Cycle / period</label><input class="input" id="org-cycle" maxlength="100" placeholder="2026 Annual review"></div></div>'+
  '<button class="action-btn space-top" data-org="create">Assign review</button></div>';
 }
-function ratingOptions(value){
- return '<option value="">Not assessed</option>'+[0,1,2,3,4].map(i=>'<option value="'+i+'" '+(value!==null&&value!==undefined&&value!==''&&Number(value)===i?'selected':'')+'>'+i+'</option>').join('');
+function levelLabel(id,entry){
+ return rubric().label(id,entry?.score);
 }
 function comparePanel(){
  if(!state.own?.submitted||!state.other?.submitted)return notice('Independent submissions are still embargoed. Comparison unlocks after both assigned participants have submitted.');
@@ -187,8 +214,8 @@ function comparePanel(){
  const employee=selfIsEmployee?state.own:state.other,manager=selfIsEmployee?state.other:state.own;
  const rows=caps().filter(c=>employee.ratings?.[c.id]||manager.ratings?.[c.id]).map(c=>{
   const left=employee.ratings?.[c.id],right=manager.ratings?.[c.id];
-  return '<div class="review-row"><div><strong>'+esc(c.name)+'</strong><p>Employee: '+esc(left?.score??'—')+' · '+esc(left?.evidence||'Not assessed')+'</p>'+
-   '<p>Manager: '+esc(right?.score??'—')+' · '+esc(right?.evidence||'Not assessed')+'</p></div>'+
+  return '<div class="review-row"><div><strong>'+esc(c.name)+'</strong><p>Employee · '+esc(levelLabel(c.id,left))+(left?' · '+esc(left.evidence):'')+'</p>'+
+   '<p>Manager · '+esc(levelLabel(c.id,right))+(right?' · '+esc(right.evidence):'')+'</p></div>'+
    '<span class="tag">'+(left&&right?'Difference '+Math.abs(left.score-right.score):'Not comparable')+'</span></div>';
  }).join('');
  return '<div class="section-head"><h2>Shared comparison & reconciliation</h2></div>'+
@@ -200,46 +227,113 @@ function comparePanel(){
  '<div class="btnrow space-top"><button class="action-btn" data-org="comment">Add signed discussion note</button>'+
  (isHr()&&state.selected.status==='open'?'<button class="action-btn secondary" data-org="finalize">HR: finalize record</button>':'')+'</div></div>';
 }
+function assessmentSummary(locked){
+ const entries=caps();
+ const rated=entries.filter(c=>hasScore(state.draft[c.id]));
+ const incomplete=rated.some(c=>!hasEvidence(state.draft[c.id]));
+ const issue=rated.length<3?'Assess at least three capabilities before submitting.':incomplete?'Add at least 12 characters of evidence for each assessed capability.':'';
+ const rows=entries.map((c,index)=>{
+  const entry=state.draft[c.id];
+  const details=hasScore(entry)?'<p>'+esc(entry.evidence||'')+'</p>'+(!hasEvidence(entry)&&!locked?'<p>Supporting evidence needed</p>':''):'';
+  return '<div class="list-row"><div><strong>'+esc(c.name)+'</strong><p>'+esc(levelLabel(c.id,entry))+'</p>'+details+'</div>'+
+   (locked?'':'<button class="action-btn secondary" data-org="edit-assessment" data-step="'+index+'" aria-label="Edit '+esc(c.name)+'">Edit</button>')+'</div>';
+ }).join('');
+ return '<div class="card">'+
+  '<p>'+rated.length+' of '+entries.length+' capabilities assessed.</p>'+rows+
+  (locked?'':(issue?notice(issue,true):'')+
+  '<div class="btnrow space-top"><button class="action-btn secondary" data-org="previous-assessment">Previous</button>'+
+  '<button class="action-btn secondary" data-org="save">Save private draft</button>'+
+  '<button class="action-btn" data-org="submit"'+(issue?' disabled':'')+'>Submit and lock assessment</button></div>')+'</div>';
+}
+function assessmentQuestion(c){
+ const total=caps().length,step=state.assessmentStep,entry=state.draft[c.id]||{};
+ const axis=window.SOVEREIGN_DATA?.axes.find(item=>item.id===c.axis);
+ const evidenceId='org-evidence-'+c.id,ratingId='org-rating-'+c.id;
+ const nextLabel=state.editingSummary?'Back to review':step===total-1?'Review assessment':'Continue';
+ return '<div class="card assessment-panel"><div class="assessment-progress"><span>'+esc(axis?.name)+'</span><span>Capability '+(step+1)+' of '+total+'</span></div>'+
+  '<progress class="assessment-progress-bar" max="'+total+'" value="'+(step+1)+'" aria-label="Assessment progress"></progress>'+
+  '<div class="assessment-heading"><h3 id="org-assessment-question" tabindex="-1">'+esc(c.name)+'</h3>'+rubric().help(c.id,'org')+'</div><p>'+esc(c.desc)+'</p>'+
+  '<div class="field assessment-rating"><label for="'+esc(ratingId)+'">Observed proficiency</label>'+
+  '<select class="input" id="'+esc(ratingId)+'" data-org-rating="'+esc(c.id)+'">'+rubric().options(c.id,entry.score)+'</select></div>'+
+  '<div class="field space-top"><label for="'+esc(evidenceId)+'">Evidence from observed work</label>'+
+  '<textarea class="input" id="'+esc(evidenceId)+'" rows="3" maxlength="2000" aria-describedby="org-evidence-hint" data-org-evidence="'+esc(c.id)+'">'+esc(entry.evidence||'')+'</textarea>'+
+  '<p class="hint" id="org-evidence-hint">Include at least 12 characters of specific evidence. Evidence is saved with a selected level.</p></div>'+
+  (state.assessmentError?'<div role="alert">'+notice(state.assessmentError,true)+'</div>':'')+
+  '<div class="btnrow assessment-actions">'+(step?'<button class="action-btn secondary" data-org="previous-assessment">Previous</button>':'')+
+  '<button class="action-btn secondary" id="org-assessment-skip" data-org="skip-assessment"'+(hasScore(entry)?' hidden':'')+'>Leave unassessed</button>'+
+  '<button class="action-btn secondary" data-org="save">Save private draft</button>'+
+  '<button class="action-btn" data-org="next-assessment">'+nextLabel+'</button></div></div>';
+}
+function assessmentPanel(locked){
+ const c=caps()[state.assessmentStep],summary=locked||!c;
+ const title=locked?'Your locked assessment':summary?'Review your assessment':'Your independent assessment';
+ return '<section class="org-assessment"><div class="section-head"><h2 id="org-assessment-title" tabindex="-1">'+title+'</h2></div>'+
+  notice(locked?'Your submission is locked.':'Only you can read this draft until both participants submit.')+
+  (state.assessmentMessage?'<div role="status">'+notice(state.assessmentMessage)+'</div>':'')+
+  (summary?assessmentSummary(locked):assessmentQuestion(c))+'</section>';
+}
+function editAssessmentStep(step,editingSummary=false){
+ state.assessmentStep=step;state.editingSummary=editingSummary;
+ state.assessmentError='';state.assessmentMessage='';
+ notify();(document.getElementById('org-assessment-question')||document.getElementById('org-assessment-title'))?.focus();
+}
+function advanceAssessment(skip){
+ const c=caps()[state.assessmentStep];
+ if(!c)return;
+ const entry=state.draft[c.id];
+ if(skip){
+  if(hasScore(entry))return;
+  state.draft[c.id]={score:null,evidence:entry?.evidence||''};
+ }else if(!hasScore(entry)||!hasEvidence(entry)){
+  state.assessmentError=hasScore(entry)?'Add at least 12 characters of supporting evidence to continue.':'Choose a proficiency level or skip this capability as unassessed.';
+  notify();
+  document.getElementById((hasScore(entry)?'org-evidence-':'org-rating-')+c.id)?.focus();
+  return;
+ }
+ editAssessmentStep(state.editingSummary?caps().length:state.assessmentStep+1);
+}
 function reviewPanel(){
  const r=state.selected,participant=isParticipant(r),isLocked=state.own?.submitted||r.status==='finalized';
- let editor='';
- if(participant){
-  editor='<div class="section-head"><h2>Your independent assessment</h2></div>'+
-  '<div class="notice">'+(isLocked?'Your submission is locked.':'Only you can read this draft until both sides submit. Save as often as needed.')+'</div>'+
-  '<div class="card">'+caps().map(c=>{
-   const v=state.draft[c.id]||{};
-   return '<div class="review-row"><div><h3>'+esc(c.name)+'</h3><p>'+esc(c.desc)+'</p>'+
-    '<label>Evidence / context</label><textarea class="input" rows="2" maxlength="2000" data-org-evidence="'+esc(c.id)+'" '+(isLocked?'disabled':'')+'>'+esc(v.evidence||'')+'</textarea></div>'+
-    '<div class="field"><label>Observed proficiency</label><select class="input" data-org-rating="'+esc(c.id)+'" '+(isLocked?'disabled':'')+'>'+ratingOptions(v.score)+'</select></div></div>';
-  }).join('')+'</div>'+
-  (!isLocked?'<div class="btnrow"><button class="action-btn secondary" data-org="save">Save private draft</button><button class="action-btn" data-org="submit">Submit and lock assessment</button></div>':'');
- }
  return '<div class="section-head"><h2>Selected review: '+esc(r.cycle)+'</h2></div>'+
  '<div class="notice">Employee '+esc(r.employeeUid)+' · Manager '+esc(r.managerUid)+' · '+esc(r.status)+'</div>'+
- editor+comparePanel();
+ (participant?assessmentPanel(isLocked):'')+comparePanel();
 }
 async function run(fn){state.loading=true;state.error='';try{await fn();}catch(err){error(err);return}state.loading=false;notify();}
 document.addEventListener('input',ev=>{
  const x=ev.target, id=x.dataset.orgEvidence||x.dataset.orgRating;
- if(!id)return;
+ if(!id||state.loading||!isParticipant(state.selected)||state.selected.status!=='open'||state.own?.submitted||caps()[state.assessmentStep]?.id!==id)return;
  if(!state.draft[id])state.draft[id]={score:null,evidence:''};
  if(x.dataset.orgEvidence)state.draft[id].evidence=x.value;
- else state.draft[id].score=x.value===''?null:Number(x.value);
+ else{
+  state.draft[id].score=x.value===''?null:Number(x.value);
+  const skip=document.getElementById('org-assessment-skip');
+  if(skip)skip.hidden=hasScore(state.draft[id]);
+ }
 });
 document.addEventListener('click',ev=>{
  const b=ev.target.closest('[data-org]');if(!b)return;
  const action=b.dataset.org;
+ if(state.loading)return;
  if(action==='connect')return run(()=>connect(document.getElementById('org-id')?.value));
- if(action==='leave'){state.orgId='';state.member=null;state.reviews=[];state.selected=null;notify();return}
- if(action==='refresh')return run(()=>refresh());
+ if(action==='leave'){state.orgId='';state.member=null;state.reviews=[];clearSelection();notify();return}
+ if(action==='refresh')return run(async()=>{
+  const review=state.selected;
+  await refresh();
+  if(review&&state.selected===review&&(!isParticipant(review)||state.own?.submitted))await openReview(review.id);
+ });
  if(action==='create')return run(()=>createReview(document.getElementById('org-employee')?.value,document.getElementById('org-manager')?.value,document.getElementById('org-cycle')?.value));
  if(action==='open')return run(()=>openReview(b.dataset.id));
+ if(isParticipant(state.selected)&&state.selected.status==='open'&&!state.own?.submitted){
+  if(action==='previous-assessment'&&state.assessmentStep>0)return editAssessmentStep(state.assessmentStep-1);
+  if(action==='next-assessment'||action==='skip-assessment')return advanceAssessment(action==='skip-assessment');
+  if(action==='edit-assessment'&&state.assessmentStep===caps().length&&caps()[Number(b.dataset.step)])return editAssessmentStep(Number(b.dataset.step),true);
+ }
  if(action==='save')return run(()=>saveDraft(false));
  if(action==='submit')return run(()=>saveDraft(true));
  if(action==='comment')return run(()=>discuss(document.getElementById('org-comment')?.value));
  if(action==='finalize')return run(()=>finalize());
 });
-window.addEventListener('sovereign-auth-change',()=>{state.orgId='';state.member=null;state.selected=null;state.reviews=[];state.own=null;state.other=null;state.draft={};notify()});
+window.addEventListener('sovereign-auth-change',()=>{state.orgId='';state.member=null;state.reviews=[];clearSelection();notify()});
 window.SOVEREIGN_ORG={render,get state(){return state},connect,refresh,openReview};
 notify();
 })();

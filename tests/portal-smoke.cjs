@@ -16,7 +16,7 @@ const ctx={window,document,location,CustomEvent,HashChangeEvent,console,
 localStorage:{getItem:k=>local.get(k)||null,setItem:(k,v)=>local.set(k,v)},setTimeout:()=>0,clearTimeout(){},confirm:()=>true,
 URL:{createObjectURL:()=>'',revokeObjectURL(){}},Blob:class{}};
 vm.createContext(ctx);
-for(const name of ['data.js','app.js','cloud.js','portal.js','org.js'])vm.runInContext(read(name),ctx,{filename:name});
+for(const name of ['data.js','rubric.js','app.js','cloud.js','portal.js','org.js'])vm.runInContext(read(name),ctx,{filename:name});
 assert.match(get('app').innerHTML,/Personal development/);
 assert.match(get('app').innerHTML,/Organization/);
 assert.ok(bodyClasses.has('portal-view'));
