@@ -1,28 +1,41 @@
-# Google sign-in setup on existing GitHub Pages
+# Google Sign-In and personal Google Drive storage
 
-Sovereign Lab stays on GitHub Pages; Firebase adds Google identity and **manual**
-personal cloud backup. Google Sign-In does not grant access to Gmail messages.
+The app remains on GitHub Pages. Firebase Authentication identifies the user.
+The Personal workspace uses the user's private Google Drive **appDataFolder**
+rather than centrally storing their personal assessments in Cloud Firestore.
+Only the `https://www.googleapis.com/auth/drive.appdata` OAuth scope is requested
+when users choose a cloud save or restore. No Gmail inbox or full Google Drive access.
+
+## Product owner: one-time setup
 
 1. Create a project at https://console.firebase.google.com.
-2. Register a Web application, copy its public Firebase web app configuration.
-3. Authentication > Sign-in method: enable Google, choose a support email.
-4. Authentication > Settings > Authorized domains: add `kriven-lang.github.io`.
-5. Firestore Database: choose region and start with locked production rules.
-6. Paste the repository's `firestore.rules` into Firestore > Rules and publish.
-7. Edit `firebase-config.js` on GitHub to assign the web app's `apiKey`,
-   `authDomain`, `projectId` and `appId`. These are public identifiers.
-   NEVER upload private keys, service accounts or OAuth client secrets.
-8. After GitHub Pages deploys, visit `#account`, sign in, and deliberately
-   choose Save personal profile or Load cloud profile.
+2. Register a Web App, enable Google as an authentication provider, and configure
+   the Authentication authorized domain `kriven-lang.github.io`.
+3. Enable Google Drive API for the associated Google Cloud project.
+4. Configure the project's Google OAuth consent screen and testing users or
+   production publication, including the `drive.appdata` permission if required.
+5. Set public Web app values in `firebase-config.js`: `apiKey`, `authDomain`,
+   `projectId`, `appId`. NEVER paste OAuth client secrets, API private keys,
+   service account JSON, or database admin credentials into GitHub.
+6. Open the GitHub Pages website, choose Personal sign-in, and select **Save
+   personal profile**. Google requests narrowly scoped Drive app-data consent
+   before saving. The next visit can restore the profile after consent again.
 
-**Migration:** Before enabling sign-in, export a JSON backup of your v0.1 data.
-After sign-in, import the backup to the new per-account local workspace.
+## Data separation and limitations
 
-Cloud backup includes personal capability evidence, aspirations and development
-goals, but excludes private flourishing reflections and workplace reviews.
-Browser localStorage is not encrypted. This is not an enterprise HR backend
-or end-to-end encryption. Firebase project admins can access their infrastructure.
+- Only personal assessment evidence, targets, aspiration history and practice
+  selections are saved to Drive, by explicit user action.
+- Flourishing reflections and local role review observations stay local.
+- Drive access tokens are held only in browser memory. After a reload the
+  authorization popup may be required again.
+- The user retains control of their Drive account and can revoke app access
+  using their Google Account settings.
+- The local browser storage is not encrypted. This setup is not end-to-end encryption.
+- Firebase authentication identifies the account but is not a substitute for
+  explicit organization membership and backend review access controls.
+- There is no automatic migration of previous anonymous local data. Export
+  a JSON backup before activating Google login, then import after signing in.
 
-Official docs:
+Google source documentation:
+https://developers.google.com/workspace/drive/api/guides/appdata
 https://firebase.google.com/docs/auth/web/google-signin
-https://firebase.google.com/docs/firestore/security/get-started

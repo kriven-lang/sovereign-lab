@@ -14,3 +14,8 @@
 - Added book suggestions based on stated development goals.
 - Added visible interpretive cautions around morality and obedience in workplace reviews.
 - Documented planned organizational roles, workflow and protected data boundaries.
+
+## v0.3 — Google Drive personal storage
+
+- Implemented Google Drive appDataFolder save/restore for personal progress using user-granted OAuth scope.
+- Added distinct personal and organizational Google sign-in paths.

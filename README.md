@@ -64,3 +64,7 @@ With Node.js installed, run `node tests/smoke.cjs` to validate the main screen r
 ## v0.2 — Authentication foundation
 
 The site stays hosted by GitHub Pages. Google login and manual cloud backups require Firebase one-time setup; see `docs/GOOGLE_SIGN_IN.md`. Only personal assessment and aspiration data is eligible for backup. Journals and workplace reviews remain local. Organization dashboards, HR data, recruitment workflows and AI coaching are planned but **not implemented**. See `docs/ORG_ARCHITECTURE.md` for roles, assessment workflows, and the carefully bounded morality and instruction-adherence metrics.
+
+## Personal Google Drive
+
+As of v0.3, personal cloud saves and restores use the signed-in user's Google Drive hidden `appDataFolder` with a narrowly scoped OAuth grant. Firestore is reserved for the organizational review records. See `docs/GOOGLE_SIGN_IN.md`. These integrations require Firebase/Google Cloud configuration before they will function on the hosted site.
