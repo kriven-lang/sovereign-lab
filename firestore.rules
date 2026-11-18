@@ -1,22 +1,143 @@
 rules_version = '2';
 service cloud.firestore {
  match /databases/{database}/documents {
-  function owner(uid) {return request.auth != null && request.auth.uid == uid;}
-  function personalPayload() {
-   return request.resource.data.keys().hasOnly(['format','schema','workspace','updatedAt'])
-    && request.resource.data.keys().hasAll(['format','schema','workspace','updatedAt'])
-    && request.resource.data.format == 'sovereign-lab-personal'
-    && request.resource.data.schema == 1
-    && request.resource.data.workspace is map
-    && request.resource.data.workspace.schema == 1
-    && request.resource.data.workspace.keys().hasOnly(['schema','goal','goalName','pendingTemplate','targets','assessments','history','plans'])
-    && request.resource.data.updatedAt == request.time;
+  function signedWork() {
+   return request.auth != null && request.auth.token.email_verified == true
+    && request.auth.token.firebase.sign_in_provider == 'google.com'
+    && request.auth.token.email is string
+    && !request.auth.token.email.matches('.*@gmail[.]com$')
+    && !request.auth.token.email.matches('.*@googlemail[.]com$');
   }
-  match /users/{uid}/private/{docId} {
-   allow read: if owner(uid) && docId == 'profile';
-   allow create, update: if owner(uid) && docId == 'profile' && personalPayload();
-   allow delete: if owner(uid) && docId == 'profile';
+  function memberPath(org) {
+   return /databases/$(database)/documents/organizations/$(org)/members/$(request.auth.uid);
   }
-  match /{document=**} {allow read, write: if false;}
+  function active(org) {
+   return signedWork() && exists(memberPath(org))
+    && get(memberPath(org)).data.active == true
+    && get(memberPath(org)).data.email == request.auth.token.email;
+  }
+  function hr(org) {
+   return active(org) && get(memberPath(org)).data.role in ['hr','admin'];
+  }
+  function reviewPath(org,reviewId) {
+   return /databases/$(database)/documents/organizations/$(org)/reviews/$(reviewId);
+  }
+  function submissionPath(org,reviewId,uid) {
+   return /databases/$(database)/documents/organizations/$(org)/reviews/$(reviewId)/submissions/$(uid);
+  }
+  function participant(org,reviewId) {
+   return active(org) && exists(reviewPath(org,reviewId))
+    && request.auth.uid in [
+      get(reviewPath(org,reviewId)).data.employeeUid,
+      get(reviewPath(org,reviewId)).data.managerUid
+    ];
+  }
+  function paired(org,reviewId) {
+   let r = get(reviewPath(org,reviewId)).data;
+   return exists(submissionPath(org,reviewId,r.employeeUid))
+    && exists(submissionPath(org,reviewId,r.managerUid))
+    && get(submissionPath(org,reviewId,r.employeeUid)).data.submitted == true
+    && get(submissionPath(org,reviewId,r.managerUid)).data.submitted == true;
+  }
+  function validRating(r,id,submitted) {
+   return !(id in r) || (
+     r[id] is map && r[id].keys().hasOnly(['score','evidence'])
+     && r[id].keys().hasAll(['score','evidence'])
+     && r[id].score is int && r[id].score >= 0 && r[id].score <= 4
+     && r[id].evidence is string
+     && r[id].evidence.size() <= 2000
+     && (!submitted || r[id].evidence.size() >= 12)
+   );
+  }
+  function validSubmission(uid) {
+   return request.resource.data.keys().hasOnly(['authorUid','ratings','submitted','updatedAt'])
+    && request.resource.data.keys().hasAll(['authorUid','ratings','submitted','updatedAt'])
+    && request.resource.data.authorUid == uid
+    && request.resource.data.submitted is bool
+    && request.resource.data.updatedAt == request.time
+    && request.resource.data.ratings is map
+    && request.resource.data.ratings.size() <= 16
+    && request.resource.data.ratings.keys().hasOnly(['comprehension','evaluation','generation','reframing','metacognition','observation','execution','experimentation','construction','transformation','honesty','accountability','fairness','courage','discernment','stewardship'])
+    && (!request.resource.data.submitted || request.resource.data.ratings.size() >= 3)
+      && validRating(request.resource.data.ratings,'comprehension',request.resource.data.submitted)
+      && validRating(request.resource.data.ratings,'evaluation',request.resource.data.submitted)
+      && validRating(request.resource.data.ratings,'generation',request.resource.data.submitted)
+      && validRating(request.resource.data.ratings,'reframing',request.resource.data.submitted)
+      && validRating(request.resource.data.ratings,'metacognition',request.resource.data.submitted)
+      && validRating(request.resource.data.ratings,'observation',request.resource.data.submitted)
+      && validRating(request.resource.data.ratings,'execution',request.resource.data.submitted)
+      && validRating(request.resource.data.ratings,'experimentation',request.resource.data.submitted)
+      && validRating(request.resource.data.ratings,'construction',request.resource.data.submitted)
+      && validRating(request.resource.data.ratings,'transformation',request.resource.data.submitted)
+      && validRating(request.resource.data.ratings,'honesty',request.resource.data.submitted)
+      && validRating(request.resource.data.ratings,'accountability',request.resource.data.submitted)
+      && validRating(request.resource.data.ratings,'fairness',request.resource.data.submitted)
+      && validRating(request.resource.data.ratings,'courage',request.resource.data.submitted)
+      && validRating(request.resource.data.ratings,'discernment',request.resource.data.submitted)
+      && validRating(request.resource.data.ratings,'stewardship',request.resource.data.submitted);
+  }
+  match /organizations/{org}/members/{uid} {
+   allow get: if active(org) && (uid == request.auth.uid || hr(org));
+   allow list: if hr(org);
+   allow create, update, delete: if false;
+  }
+  match /organizations/{org}/reviews/{reviewId} {
+   allow get, list: if active(org) && (hr(org)
+    || request.auth.uid == resource.data.employeeUid
+    || request.auth.uid == resource.data.managerUid);
+   allow create: if hr(org)
+    && request.resource.data.keys().hasOnly(['employeeUid','managerUid','cycle','status','createdBy','createdAt'])
+    && request.resource.data.keys().hasAll(['employeeUid','managerUid','cycle','status','createdBy','createdAt'])
+    && request.resource.data.employeeUid is string
+    && request.resource.data.managerUid is string
+    && request.resource.data.employeeUid != request.resource.data.managerUid
+    && exists(/databases/$(database)/documents/organizations/$(org)/members/$(request.resource.data.employeeUid))
+    && exists(/databases/$(database)/documents/organizations/$(org)/members/$(request.resource.data.managerUid))
+    && get(/databases/$(database)/documents/organizations/$(org)/members/$(request.resource.data.employeeUid)).data.active == true
+    && get(/databases/$(database)/documents/organizations/$(org)/members/$(request.resource.data.managerUid)).data.active == true
+    && get(/databases/$(database)/documents/organizations/$(org)/members/$(request.resource.data.managerUid)).data.role in ['manager','hr','admin']
+    && request.resource.data.cycle is string
+    && request.resource.data.cycle.size() >= 3 && request.resource.data.cycle.size() <= 100
+    && request.resource.data.status == 'open'
+    && request.resource.data.createdBy == request.auth.uid
+    && request.resource.data.createdAt == request.time;
+   allow update: if hr(org)
+    && resource.data.status == 'open'
+    && request.resource.data.status == 'finalized'
+    && request.resource.data.finalizedBy == request.auth.uid
+    && request.resource.data.finalizedAt == request.time
+    && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status','finalizedBy','finalizedAt'])
+    && paired(org,reviewId);
+   allow delete: if false;
+   match /submissions/{uid} {
+    allow get: if (participant(org,reviewId) && uid == request.auth.uid)
+     || ((participant(org,reviewId) || hr(org)) && paired(org,reviewId));
+    allow list: if false;
+    allow create: if participant(org,reviewId)
+     && uid == request.auth.uid
+     && get(reviewPath(org,reviewId)).data.status == 'open'
+     && validSubmission(uid);
+    allow update: if participant(org,reviewId)
+     && uid == request.auth.uid
+     && resource.data.submitted == false
+     && get(reviewPath(org,reviewId)).data.status == 'open'
+     && validSubmission(uid);
+    allow delete: if false;
+   }
+   match /discussion/{commentId} {
+    allow get, list: if (participant(org,reviewId) || hr(org)) && paired(org,reviewId);
+    allow create: if (participant(org,reviewId) || hr(org))
+     && paired(org,reviewId)
+     && request.resource.data.keys().hasOnly(['authorUid','text','createdAt'])
+     && request.resource.data.keys().hasAll(['authorUid','text','createdAt'])
+     && request.resource.data.authorUid == request.auth.uid
+     && request.resource.data.text is string
+     && request.resource.data.text.size() >= 10 && request.resource.data.text.size() <= 2500
+     && request.resource.data.createdAt == request.time;
+    allow update, delete: if false;
+   }
+  }
+  // Everything else is private and inaccessible from the browser.
+  match /{path=**} { allow read, write: if false; }
  }
 }
