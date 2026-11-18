@@ -1,8 +1,8 @@
 /* Sovereign Lab: intentionally dependency-free, offline-friendly, local-first. */
 (function(){
 'use strict';
-const D=window.SOVEREIGN_DATA,R=window.SOVEREIGN_RUBRIC;
-if(!D||!R){document.getElementById('app').textContent='Framework data could not load.';return;}
+const D=window.SOVEREIGN_DATA,R=window.SOVEREIGN_RUBRIC,I=window.SOVEREIGN_INSIGHTS;
+if(!D||!R||!I){document.getElementById('app').textContent='Framework data could not load.';return;}
 const BASE_KEY='sovereign-lab-state-v1';
 const authConfigured=!!(window.SOVEREIGN_FIREBASE_CONFIG?.apiKey&&window.SOVEREIGN_FIREBASE_CONFIG?.projectId);
 let activeUser=null;
@@ -16,22 +16,42 @@ const e=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt
 const clamp=(v,min,max)=>Math.max(min,Math.min(max,Number(v)||0));
 const asRating=v=>v===null||v===undefined||v===''?null:(Number.isInteger(Number(v))&&Number(v)>=0&&Number(v)<=4?Number(v):null);
 const niceDate=iso=>{try{return new Date(iso).toLocaleDateString(undefined,{year:'numeric',month:'short',day:'numeric'})}catch{return 'Unknown date'}};
-function makeDefault(){return {schema:1,goal:'founder',goalName:'Entrepreneurial builder',targets:{...template('founder').targets},pendingTemplate:'founder',assessments:{},assessmentAxis:null,history:[],plans:[],reflections:{},review:{person:'',observer:'',role:'dependable',ratings:{},notes:''}}}
+const profileFields={role:['Current job or role',120,'e.g. Operations coordinator'],responsibilities:['Responsibilities and work context',1200,'e.g. Coordinate deliveries, manage exceptions, and report service trends'],hobbies:['Hobbies and interests',400,'e.g. Gardening, photography, and local volunteering'],targetRole:['Target job or role',120,'e.g. Operations manager'],targetContext:['What you want to be able to do',1200,'e.g. Plan capacity and lead process improvements across teams']};
+function normalizeProfile(raw){
+ const fields=Object.fromEntries(Object.entries(profileFields).map(([key,[,max]])=>[key,typeof raw?.[key]==='string'?raw[key].slice(0,max):'']));
+ return {...fields,roleTemplate:TEMPLATES.find(item=>item.id===raw?.roleTemplate)?.id||''};
+}
+const profileRoleTargets=profile=>TEMPLATES.find(item=>item.id===profile.roleTemplate)?.targets||null;
+function normalizeAssessments(raw){
+ const assessments={};
+ for(const c of CAP){
+  const entry=raw?.[c.id];
+  if(entry&&typeof entry==='object')assessments[c.id]={current:asRating(entry.current),importance:clamp(entry.importance??3,1,5),motivation:clamp(entry.motivation??3,1,5),evidence:String(entry.evidence||'').slice(0,5000)};
+ }
+ return assessments;
+}
+const normalizeMode=value=>value==='professional'?'professional':'personal';
+function makeDefault(){return {schema:1,goal:'founder',goalName:'Entrepreneurial builder',targets:{...template('founder').targets},pendingTemplate:'founder',profile:normalizeProfile(),assessments:{},assessmentAxis:null,assessmentSaved:false,assessmentMode:'personal',assessmentHistory:[],history:[],plans:[],reflections:{},review:{person:'',observer:'',role:'dependable',ratings:{},notes:''}}}
 function normalize(raw){
  const base=makeDefault();if(!raw||typeof raw!=='object'||raw.schema!==1)return base;
  base.goal=typeof raw.goal==='string'?raw.goal:base.goal;
  base.goalName=typeof raw.goalName==='string'?raw.goalName.slice(0,120):base.goalName;
  base.pendingTemplate=template(raw.pendingTemplate).id;
+ base.profile=normalizeProfile(raw.profile);
+ base.assessmentMode=normalizeMode(raw.assessmentMode);
+ base.assessments=normalizeAssessments(raw.assessments);
+ if(Array.isArray(raw.assessmentHistory))base.assessmentHistory=raw.assessmentHistory.filter(record=>typeof record?.date==='string'&&Number.isFinite(Date.parse(record.date))).map(record=>({
+  date:record.date,mode:normalizeMode(record.mode),goalName:String(record.goalName||'').slice(0,120),profile:normalizeProfile(record.profile),
+  targets:Object.fromEntries(CAP.map(c=>[c.id,asRating(record.targets?.[c.id])??0])),assessments:normalizeAssessments(record.assessments),
+  roleTargets:record.roleTargets?Object.fromEntries(CAP.map(c=>[c.id,asRating(record.roleTargets[c.id])??0])):null
+ }));
+ base.assessmentSaved=raw.assessmentSaved===true&&base.assessmentHistory.length>0;
  if(Number.isInteger(raw.assessmentAxis)&&raw.assessmentAxis>=0&&raw.assessmentAxis<=AXES.length){
   base.assessmentAxis=raw.assessmentAxis;
  }else if(Number.isInteger(raw.assessmentStep)&&raw.assessmentStep>=0&&raw.assessmentStep<=CAP.length){
   base.assessmentAxis=raw.assessmentStep===CAP.length?AXES.length:AXES.findIndex(axis=>axis.id===CAP[raw.assessmentStep].axis);
  }
- for(const c of CAP){
-  base.targets[c.id]=asRating(raw.targets?.[c.id])??base.targets[c.id];
-  const a=raw.assessments?.[c.id];
-  if(a&&typeof a==='object')base.assessments[c.id]={current:asRating(a.current),importance:clamp(a.importance??3,1,5),motivation:clamp(a.motivation??3,1,5),evidence:String(a.evidence||'').slice(0,5000)};
- }
+ for(const c of CAP)base.targets[c.id]=asRating(raw.targets?.[c.id])??base.targets[c.id];
  if(Array.isArray(raw.history))base.history=raw.history.slice(-100).filter(h=>h&&typeof h==='object').map(h=>({date:String(h.date||''),name:String(h.name||'').slice(0,120),goal:String(h.goal||''),targets:Object.fromEntries(CAP.map(c=>[c.id,asRating(h.targets?.[c.id])??0]))}));
  if(Array.isArray(raw.plans))base.plans=raw.plans.filter(id=>CAP.some(c=>c.id===id));
  for(const r of D.reflections)base.reflections[r.id]=String(raw.reflections?.[r.id]||'').slice(0,10000);
@@ -40,9 +60,12 @@ function normalize(raw){
  return base;
 }
 let state=authConfigured?makeDefault():readLocal(BASE_KEY)
-let reviewAxis='thought';let toastTimer;
-function save(){if(authConfigured&&!activeUser&&!window.SOVEREIGN_GUEST)return;try{localStorage.setItem(storageKey(),JSON.stringify(state))}catch{toast('Browser storage unavailable. Export a backup to preserve changes.')}}
-function personalCloudWorkspace(){const {schema,goal,goalName,pendingTemplate,targets,assessments,assessmentAxis,history,plans}=state;return {schema,goal,goalName,pendingTemplate,targets,assessments,assessmentAxis,history,plans}}
+let reviewAxis='thought',historyIndex=null,guestLoaded=!authConfigured,toastTimer;
+function save(){if(authConfigured&&!activeUser&&!window.SOVEREIGN_GUEST)return false;try{localStorage.setItem(storageKey(),JSON.stringify(state));return true}catch{toast('Browser storage unavailable. Export a backup to preserve changes.');return false}}
+function personalCloudWorkspace(){
+ const {schema,goal,goalName,pendingTemplate,targets,profile,assessments,assessmentAxis,assessmentSaved,assessmentMode,assessmentHistory,history,plans}=state;
+ return {schema,goal,goalName,pendingTemplate,targets,profile,assessments,assessmentAxis,assessmentSaved,assessmentMode,assessmentHistory,history,plans};
+}
 
 function toast(msg){const t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>t.classList.remove('show'),3500)}
 function a(id){return state.assessments[id]||(state.assessments[id]={current:null,importance:3,motivation:3,evidence:''})}
@@ -61,17 +84,26 @@ const pill=(text,cls='')=>`<span class="tag ${cls}">${e(text)}</span>`;
 function pageIntro(k,title,lead){return `<div class="eyebrow">${e(k)}</div><h1 class="headline">${title}</h1><p class="lead">${lead}</p>`}
 function header(title,subtitle='',right=''){return `<div class="section-head"><div><h2>${e(title)}</h2>${subtitle?`<p>${e(subtitle)}</p>`:''}</div>${right}</div>`}
 function axisTabs(selected){return `<div class="tabs" role="group" aria-label="Capability axis">${D.axes.map(x=>`<button type="button" class="tab ${selected===x.id?'active':''}" data-action="axis" data-axis="${x.id}">${e(x.icon)} &nbsp;${e(x.name)}</button>`).join('')}</div>`}
-function gaps(){return CAP.map(c=>{const ac=a(c.id);const target=state.targets[c.id];const known=ac.current!==null;const gap=known?Math.max(0,target-ac.current):0;const priority=gap*(.5+ac.importance/5)*(.5+ac.motivation/5);return {...c,current:ac.current,target,importance:ac.importance,motivation:ac.motivation,known,gap,priority}}).filter(x=>x.target>0&&x.gap>0).sort((x,y)=>y.priority-x.priority)}
-function coverage(){return CAP.filter(c=>a(c.id).current!==null).length}
+const planningRatings=()=>state.assessmentHistory.at(-1)?.assessments||state.assessments;
+function gaps(){
+ const ratings=planningRatings();
+ return CAP.flatMap(c=>{
+  const entry=ratings[c.id],target=state.targets[c.id];
+  if(entry?.current==null||target<=0||entry.current>=target)return [];
+  const {current,importance,motivation}=entry,gap=target-current;
+  return [{...c,current,target,importance,motivation,gap,priority:gap*(.5+importance/5)*(.5+motivation/5)}];
+ }).sort((x,y)=>y.priority-x.priority);
+}
 function overview(){
- const gs=gaps(), known=coverage(), strengths=CAP.filter(c=>a(c.id).current!==null&&a(c.id).current>=3), unknown=CAP.filter(c=>a(c.id).current===null&&state.targets[c.id]>0).length;
+ const ratings=planningRatings(),gs=gaps(),known=assessedCount(ratings);
+ const strengths=CAP.filter(c=>ratings[c.id]?.current>=3),unknown=CAP.filter(c=>ratings[c.id]?.current==null&&state.targets[c.id]>0).length;
  return pageIntro('Your development workspace','Know your strengths.<br><em>Choose your direction.</em>','Map what you can demonstrate, what you aspire to, and how to grow. Thought, action and integrity are independent capabilities; flourishing remains a private reflection, not a score.')+
  `<div class="dash-actions"><button class="action-btn" data-action="go" data-to="assessment">Continue assessment ↗</button><button class="action-btn secondary" data-action="go" data-to="aspirations">Explore aspirations</button></div>`+
  `<div class="grid grid-3"><div class="card tint"><div class="stat-label">Current aspiration</div><div class="stat-number" style="font-size:20px;margin-top:18px">${e(state.goalName||'Custom direction')}</div><div class="stat-desc">Your targets can change whenever you do.</div></div><div class="card"><div class="stat-label">Capabilities assessed</div><div class="stat-number">${known}<span class="muted" style="font-size:18px"> / ${CAP.length}</span></div><div class="progress-track"><div style="width:${known/CAP.length*100}%"></div></div><div class="stat-desc">${CAP.length-known} awaiting evidence</div></div><div class="card"><div class="stat-label">Development opportunities</div><div class="stat-number">${gs.length}</div><div class="stat-desc">Observed gaps against your selected targets · ${unknown} target areas not yet assessed</div></div></div>`+
  header('Capability coverage','Independent domains; no overall human score')+
- `<div class="grid grid-3">${D.axes.map(x=>{const list=CAP.filter(c=>c.axis===x.id),count=list.filter(c=>a(c.id).current!==null).length;return `<div class="card"><div class="axis-label">${e(x.name)}</div><h3>${count} of ${list.length} assessed</h3><div class="progress-track"><div style="width:${count/list.length*100}%"></div></div><p>${e(x.subtitle)}</p></div>`}).join('')}</div>`+
+ `<div class="grid grid-3">${D.axes.map(x=>{const list=CAP.filter(c=>c.axis===x.id),count=list.filter(c=>ratings[c.id]?.current!=null).length;return `<div class="card"><div class="axis-label">${e(x.name)}</div><h3>${count} of ${list.length} assessed</h3><div class="progress-track"><div style="width:${count/list.length*100}%"></div></div><p>${e(x.subtitle)}</p></div>`}).join('')}</div>`+
  `<div class="split"> <div>${header('Next development priorities','Based on known gaps, importance and motivation')}<div class="card">${gs.length?gs.slice(0,4).map(g=>`<div class="gap-card"><div><h3>${e(g.name)}</h3><p>${e(g.axis)} · Current ${visibleRating(g.current)} · Target ${visibleRating(g.target)}</p></div><span class="gap-pill">Gap +${g.gap}</span></div>`).join(''):`<div class="quiet">No demonstrated gaps yet. Assess capabilities or adjust the targets to see relevant development priorities.</div>`}<button class="action-btn secondary space-top" data-action="go" data-to="development">Open development plan →</button></div></div>
- <div>${header('Demonstrated strengths','Shown only when assessed')}<div class="card">${strengths.length?strengths.slice(0,6).map(c=>`<div class="list-row"><div><strong>${e(c.name)}</strong><div class="meta">${e(c.axis)}</div></div>${pill(visibleRating(a(c.id).current),'green')}</div>`).join(''):`<div class="quiet">No high proficiency ratings recorded yet. “Not assessed” is not a weakness.</div>`}<div class="notice">Record concrete evidence before using these self-ratings for decisions. Role reviews use separate observations.</div></div></div></div>`+
+ <div>${header('Demonstrated strengths','Shown only when assessed')}<div class="card">${strengths.length?strengths.slice(0,6).map(c=>`<div class="list-row"><div><strong>${e(c.name)}</strong><div class="meta">${e(c.axis)}</div></div>${pill(visibleRating(ratings[c.id]?.current),'green')}</div>`).join(''):`<div class="quiet">No high proficiency ratings recorded yet. “Not assessed” is not a weakness.</div>`}<div class="notice">Record concrete evidence before using these self-ratings for decisions. Role reviews use separate observations.</div></div></div></div>`+
  `<div class="callout"><strong>Two kinds of sovereignty.</strong> Intellectual sovereignty develops independent thought and effective action. Existential sovereignty helps you decide which ambitions matter while maintaining inner freedom. The tool supports both without treating either as a competition.</div>`;
 }
 function assessmentAxis(){
@@ -81,28 +113,62 @@ function assessmentAxis(){
 }
 function assessmentCapability(c){
  const ac=a(c.id);
+ const example=state.assessmentMode==='professional'?`Use an example from your work. ${c.evidence}`:c.evidence;
+ const roleTargets=state.assessmentMode==='professional'?profileRoleTargets(state.profile):null;
  return `<article class="cap-card" aria-labelledby="assessment-cap-${c.id}">
    <div class="assessment-heading"><h3 id="assessment-cap-${c.id}">${e(c.name)}</h3>${R.help(c.id,'personal')}</div>
    <p class="hint">${e(c.desc)}</p>
-   <div class="field assessment-rating"><label for="curr-${c.id}">Current proficiency</label><select class="input" id="curr-${c.id}" data-kind="assessment" data-id="${c.id}" data-prop="current">${R.options(c.id,ac.current)}</select><span class="hint">Aspiration target · ${visibleTarget(state.targets[c.id])}</span></div>
-   <div class="field"><label for="ev-${c.id}">Evidence or example (optional)</label><textarea class="input" id="ev-${c.id}" data-kind="assessment" data-id="${c.id}" data-prop="evidence" maxlength="5000" placeholder="${e(c.evidence)}">${e(ac.evidence)}</textarea></div>
+   <div class="field assessment-rating"><label for="curr-${c.id}">Current proficiency</label><select class="input" id="curr-${c.id}" data-kind="assessment" data-id="${c.id}" data-prop="current">${R.options(c.id,ac.current)}</select>${roleTargets?`<span class="hint">Current role benchmark · ${roleTargets[c.id]===0?'No benchmark':visibleRating(roleTargets[c.id])}</span>`:''}<span class="hint">Aspiration target · ${visibleTarget(state.targets[c.id])}</span></div>
+   <div class="field"><label for="ev-${c.id}">Evidence or example (optional)</label><textarea class="input" id="ev-${c.id}" data-kind="assessment" data-id="${c.id}" data-prop="evidence" maxlength="5000" placeholder="${e(example)}">${e(ac.evidence)}</textarea></div>
    <div class="fields">
     <div class="field"><label for="imp-${c.id}">Importance for your current goals</label><select class="input" id="imp-${c.id}" data-kind="assessment" data-id="${c.id}" data-prop="importance">${preferenceOptions(ac.importance,importanceLabels)}</select></div>
     <div class="field"><label for="mot-${c.id}">Motivation to improve</label><select class="input" id="mot-${c.id}" data-kind="assessment" data-id="${c.id}" data-prop="motivation">${preferenceOptions(ac.motivation,motivationLabels)}</select></div>
    </div>
   </article>`;
 }
+const assessedCount=entries=>CAP.filter(c=>entries[c.id]?.current!=null).length;
+const modeLabel=mode=>mode==='professional'?'Professional self-assessment':'Personal self-assessment';
+function assessmentDetails(entries,targets,roleTargets){
+ return `<details class="card space-top assessment-record"><summary>Capability ratings and evidence</summary><ul class="assessment-summary">${CAP.map(c=>{
+  const value=entries[c.id];
+  return `<li><strong>${e(c.name)}</strong><div><span>${e(R.label(c.id,value?.current))} · Target ${e(visibleTarget(targets[c.id]))}${roleTargets?.[c.id]>0?` · Current role benchmark ${visibleRating(roleTargets[c.id])}`:''}</span>${value?.evidence?`<p class="record-evidence">${e(value.evidence)}</p>`:''}${value?`<p>Importance ${e(value.importance)}/5 · Motivation ${e(value.motivation)}/5</p>`:''}</div></li>`;
+ }).join('')}</ul></details>`;
+}
+function assessmentReport(record){
+ const context=record.mode==='professional'?record.profile:{...record.profile,role:'',responsibilities:''};
+ const profileDetails=Object.entries(profileFields).filter(([key])=>record.profile[key].trim());
+ const roleTargets=record.roleTargets;
+ const benchmark=roleTargets?CAP.filter(c=>roleTargets[c.id]>0):[];
+ const comparable=benchmark.filter(c=>record.assessments[c.id]?.current!=null&&record.assessments[c.id].evidence.trim());
+ const meets=comparable.filter(c=>record.assessments[c.id].current>=roleTargets[c.id]);
+ return I.summary(record.assessments,record.targets,context)+
+  (benchmark.length?`<section class="card space-top"><h3>Current role benchmark</h3><p>${meets.length} of ${comparable.length} capabilities with evidence meet the illustrative role level. ${benchmark.length-comparable.length} role capabilities still need a rating or an example.</p></section>`:'')+
+  assessmentDetails(record.assessments,record.targets,roleTargets)+
+  (profileDetails.length?`<details class="card space-top assessment-record"><summary>Profile context for this assessment</summary><dl class="record-profile">${profileDetails.map(([key,[label]])=>`<dt>${e(label)}</dt><dd>${e(record.profile[key])}</dd>`).join('')}</dl></details>`:'');
+}
+function assessmentJump(step){
+ if(!state.assessmentHistory.length)return '';
+ return `<nav class="tabs assessment-jump" aria-label="Assessment sections">${[...AXES.map(axis=>axis.name),'Review'].map((label,i)=>`<button type="button" class="tab${i===step?' active':''}" data-action="assessment-jump" data-index="${i}"${i===step?' aria-current="step"':''}>${e(label)}</button>`).join('')}</nav>`;
+}
 function assessment(){
  const step=assessmentAxis(),axis=AXES[step],next=AXES[step+1];
- const intro=pageIntro('Capability assessment','Assess what you can <em>demonstrate.</em>','Work through one axis at a time. Choose levels based on what you have observed and leave other capabilities unassessed. Your progress is saved as you go.');
- if(!axis)return intro+
-  `<section class="card assessment-panel" aria-labelledby="assessment-step-heading">
+ const intro=pageIntro('Capability assessment','Assess what you can <em>demonstrate.</em>','Choose levels based on what you have observed. Leave other capabilities unassessed. Your draft is saved as you go.');
+ if(state.assessmentSaved){
+  const record=state.assessmentHistory.at(-1);
+  return intro+`<section class="card" aria-labelledby="assessment-step-heading"><h2 id="assessment-step-heading" tabindex="-1">Assessment saved</h2><p>${e(modeLabel(record.mode))} · ${e(niceDate(record.date))} · ${assessedCount(record.assessments)} of ${CAP.length} capabilities assessed</p>
+   <div class="btnrow space-top"><button class="action-btn" data-action="assessment-start">Start a fresh assessment</button><button class="action-btn secondary" data-action="go" data-to="assessment-history">View assessment history</button><button class="action-btn secondary" data-action="go" data-to="development">Open development plan</button></div></section>`+assessmentReport(record);
+ }
+ if(!axis){
+  const rated=assessedCount(state.assessments);
+  return intro+assessmentJump(step)+
+  `<section class="card" aria-labelledby="assessment-step-heading">
    <h2 id="assessment-step-heading" tabindex="-1">Review your assessment</h2>
-   <p>${coverage()} of ${CAP.length} capabilities assessed. You can revisit your answers before opening your development plan.</p>
-   <ul class="assessment-summary">${CAP.map(cap=>`<li><strong>${e(cap.name)}</strong><span>${e(R.label(cap.id,state.assessments[cap.id]?.current??null))}</span></li>`).join('')}</ul>
-   <div class="btnrow assessment-actions"><button class="action-btn secondary" data-action="assessment-back">Back to ${e(AXES[AXES.length-1].name)}</button><button class="action-btn secondary" data-action="assessment-revisit">Review from the beginning</button><button class="action-btn" data-action="go" data-to="development">Open development plan</button></div>
-  </section>`;
- return intro+
+   <p>${rated} of ${CAP.length} capabilities assessed. ${rated?'Saving records these answers, targets and profile context in your history.':'Rate at least one capability to save an assessment.'}</p>
+   <div class="btnrow assessment-actions"><button class="action-btn secondary" data-action="assessment-back">Back to ${e(AXES[AXES.length-1].name)}</button><button class="action-btn" data-action="assessment-save"${rated?'':' disabled'}>Save completed assessment</button></div>
+  </section>`+assessmentReport({mode:state.assessmentMode,profile:state.profile,assessments:state.assessments,targets:state.targets,roleTargets:state.assessmentMode==='professional'?profileRoleTargets(state.profile):null});
+ }
+ return intro+`<div class="card assessment-context"><div class="field"><label for="assessment-mode">Assessment context</label><select class="input" id="assessment-mode" data-kind="assessment-mode"><option value="personal"${state.assessmentMode==='personal'?' selected':''}>Personal development</option><option value="professional"${state.assessmentMode==='professional'?' selected':''}>Current job or role</option></select></div>
+  ${state.assessmentMode==='professional'?`<p>${state.profile.role?`Use recent examples from your work as ${e(state.profile.role)}.`:'Use recent evidence from your job or role.'}${state.profile.responsibilities?` Context: ${e(state.profile.responsibilities)}`:''}</p>`:''}<a class="small-button" href="#profile">Edit personal profile</a></div>`+assessmentJump(step)+
   `<section class="assessment-axis" aria-labelledby="assessment-step-heading">
    <div class="assessment-progress"><span>Axis ${step+1} of ${AXES.length}</span></div>
    <progress class="assessment-progress-bar" max="${AXES.length}" value="${step+1}" aria-label="Assessment progress"></progress>
@@ -120,12 +186,42 @@ function moveAssessment(step){
  render();
  document.getElementById('assessment-step-heading').focus();
 }
+function setAssessmentState(next,message){
+ const prior=state;
+ state=next;
+ if(!save()){state=prior;return}
+ historyIndex=null;
+ render();
+ document.getElementById('assessment-step-heading').focus();
+ toast(message);
+}
+function saveCompletedAssessment(){
+ if(state.assessmentSaved||assessmentAxis()!==AXES.length||!assessedCount(state.assessments))return;
+ const roleTargets=state.assessmentMode==='professional'?profileRoleTargets(state.profile):null;
+ const record={date:new Date().toISOString(),mode:state.assessmentMode,goalName:state.goalName,profile:{...state.profile},targets:{...state.targets},assessments:normalizeAssessments(state.assessments),roleTargets:roleTargets?{...roleTargets}:null};
+ setAssessmentState({...state,assessmentSaved:true,assessmentHistory:[...state.assessmentHistory,record]},'Assessment saved to your history.');
+}
+function assessmentHistory(){
+ const records=state.assessmentHistory;
+ const intro=pageIntro('Assessment history','Revisit your <em>saved assessments.</em>','Each saved assessment records the levels, evidence and goals you had at the time.');
+ if(!records.length)return intro+`<div class="card"><p>No completed assessments yet.</p><div class="btnrow space-top"><a href="#assessment" class="action-btn">Open assessment</a></div></div>`;
+ const index=historyIndex!==null&&records[historyIndex]?historyIndex:records.length-1,record=records[index];
+ return intro+`<div class="card"><div class="field"><label for="history-assessment">Saved assessment</label><select class="input" id="history-assessment" data-kind="assessment-history">${records.map((item,i)=>`<option value="${i}"${i===index?' selected':''}>${i+1} · ${e(niceDate(item.date))} · ${e(modeLabel(item.mode))}${item.profile.role&&item.mode==='professional'?` · ${e(item.profile.role)}`:''}</option>`).reverse().join('')}</select></div><p class="space-top">${assessedCount(record.assessments)} of ${CAP.length} capabilities assessed${record.goalName?` · Aspiration: ${e(record.goalName)}`:''}</p></div>`+assessmentReport(record);
+}
+function profile(){
+ return pageIntro('Personal profile','Set your <em>context.</em>','Use your current role to ground professional self-assessments. Add interests and a target role to tailor development ideas.')+
+ `<div class="card profile-fields">${Object.entries(profileFields).map(([key,[label,max,placeholder]])=>{
+  const value=e(state.profile[key]),attrs=`class="input" id="profile-${key}" data-kind="profile" data-prop="${key}" maxlength="${max}" placeholder="${e(placeholder)}"`;
+  return `<div class="field"><label for="profile-${key}">${e(label)}</label>${max>120?`<textarea ${attrs} rows="2">${value}</textarea>`:`<input ${attrs} value="${value}">`}</div>`;
+ }).join('')}<div class="field"><label for="profile-benchmark">Current role benchmark (optional)</label><select class="input" id="profile-benchmark" data-kind="profile-benchmark"><option value="">No benchmark selected</option>${TEMPLATES.map(item=>`<option value="${e(item.id)}"${item.id===state.profile.roleTemplate?' selected':''}>${e(item.name)}</option>`).join('')}</select><span class="hint">Pick an illustrative profile close to your current work. Set a separate target for where you want to go.</span></div>
+ <p>Changes save as you type. Your profile belongs to your personal workspace.</p><div class="btnrow"><a class="action-btn" href="#assessment">Open assessment</a><a class="action-btn secondary" href="#aspirations">Set proficiency targets</a></div></div>`;
+}
 function aspirations(){
  const selected=template(state.pendingTemplate);
  return pageIntro('02 / Direction & intention','The goalpost can <em>move.</em>','Choose a starting aspiration, then edit every target. Different goals call for different capability combinations; no profile defines a superior kind of person.')+
  `<div class="split"><div class="card"><div class="stat-label">Choose a template</div><div class="field" style="margin-top:11px"><label for="template">Illustrative career or life direction</label><select id="template" class="input" data-kind="template">${TEMPLATES.map(t=>`<option value="${t.id}" ${selected.id===t.id?'selected':''}>${e(t.name)}</option>`).join('')}</select></div><p style="margin:14px 0">${e(selected.description)}</p><button class="action-btn secondary" data-action="apply-template">Use these suggested targets</button><div class="hint">Applying a template replaces only targets; your assessment and evidence are retained.</div></div><div class="card tint"><div class="stat-label">Your chosen direction</div><div class="field" style="margin-top:11px"><label for="goalName">Aspiration title</label><input id="goalName" class="input" data-kind="goalName" maxlength="120" value="${e(state.goalName)}" placeholder="Name what you are working towards" /></div><div class="notice">Save aspiration snapshots to record how your priorities change over time — without calling it regression.</div><button class="action-btn" data-action="save-snapshot">Save aspiration snapshot ↗</button></div></div>`+
- header('Edit your target profile','Set a proficiency goal or mark the capability as not a priority')+
- `<div class="card">${D.axes.map(ax=>`<div class="axis-label space-top">${e(ax.name)}</div>${CAP.filter(c=>c.axis===ax.id).map(c=>`<div class="list-row"><div><strong>${e(c.name)}</strong><div class="meta">Current: ${visibleRating(a(c.id).current)}</div></div><div class="field" style="width:155px"><label for="target-${c.id}">Target proficiency</label><select id="target-${c.id}" class="input" data-kind="target" data-id="${c.id}">${targetOpts(state.targets[c.id])}</select></div></div>`).join('')}`).join('')}</div>`+
+ header('Edit your target profile',state.profile.targetRole?`Set capability targets for ${state.profile.targetRole}`:'Set a proficiency goal or mark the capability as not a priority')+
+ `<div class="card">${D.axes.map(ax=>`<div class="axis-label space-top">${e(ax.name)}</div>${CAP.filter(c=>c.axis===ax.id).map(c=>`<div class="list-row"><div><strong>${e(c.name)}</strong><div class="meta">Current: ${visibleRating(planningRatings()[c.id]?.current)}</div></div><div class="field" style="width:155px"><label for="target-${c.id}">Target proficiency</label><select id="target-${c.id}" class="input" data-kind="target" data-id="${c.id}">${targetOpts(state.targets[c.id])}</select></div></div>`).join('')}`).join('')}</div>`+
  header('Aspiration timeline','Historical snapshots record priorities, not a measure of human worth')+
  `<div class="card">${state.history.length?state.history.slice().reverse().map((h,i)=>`<div class="history-row"><div><strong>${e(h.name||'Unnamed aspiration')}</strong><small>${e(niceDate(h.date))} · ${Object.values(h.targets).filter(v=>v>=3).length} high-priority capabilities</small></div><button class="small-button" data-action="restore-snapshot" data-index="${state.history.length-1-i}">Restore targets</button></div>`).join(''):`<div class="quiet">No snapshots saved yet. Save your current direction, then compare future changes against it.</div>`}</div>`;
 }
@@ -140,11 +236,11 @@ function reading(){
 }
 
 function development(){
- const gs=gaps(),unknown=CAP.filter(c=>a(c.id).current===null&&state.targets[c.id]>0);
+ const ratings=planningRatings(),gs=gaps(),unknown=CAP.filter(c=>ratings[c.id]?.current==null&&state.targets[c.id]>0);
  return pageIntro('03 / Deliberate practice','Turn gaps into <em>experiments.</em>','The goal is not to maximize every score. Prioritize the capabilities that matter to your current direction, then choose practical experiences that can create real evidence.')+
- `<div class="grid grid-3"><div class="card"><div class="stat-label">Observed priority gaps</div><div class="stat-number">${gs.length}</div><div class="stat-desc">Current below target</div></div><div class="card"><div class="stat-label">Unknown areas</div><div class="stat-number">${unknown.length}</div><div class="stat-desc">Assess before interpreting as gaps</div></div><div class="card"><div class="stat-label">Practices selected</div><div class="stat-number">${state.plans.length}</div><div class="stat-desc">Your active development intentions</div></div></div>`+
- header('Your priority practice list','Ordered by gap × personal importance × motivation')+
- `<div class="card">${gs.length?gs.map((g,i)=>`<div class="gap-card"><div><div class="numbered">PRIORITY ${String(i+1).padStart(2,'0')} · ${e(g.axis).toUpperCase()}</div><h3>${e(g.name)}</h3><p>Current ${visibleRating(g.current)} → Target ${visibleRating(g.target)} · Importance ${g.importance}/5 · Motivation ${g.motivation}/5</p><div class="notice" style="margin:12px 0"><strong>Practice:</strong> ${e(g.practice)}</div><label class="tiny"><input type="checkbox" data-kind="plan" data-id="${g.id}" ${state.plans.includes(g.id)?'checked':''} /> Add to my active practices</label></div><span class="gap-pill">+${g.gap}</span></div>`).join(''):`<div class="quiet">No known target gaps. This is not the same as having nothing to improve: you can assess more areas or change your chosen direction.</div>`}</div>`+
+ `<div class="grid grid-3"><div class="card"><div class="stat-label">Rated priority gaps</div><div class="stat-number">${gs.length}</div><div class="stat-desc">Current below target</div></div><div class="card"><div class="stat-label">Unknown areas</div><div class="stat-number">${unknown.length}</div><div class="stat-desc">Assess before interpreting as gaps</div></div><div class="card"><div class="stat-label">Practices selected</div><div class="stat-number">${state.plans.length}</div><div class="stat-desc">Your active development intentions</div></div></div>`+
+ header('Your priority practice list',state.assessmentHistory.length?'Uses your latest saved assessment and current targets':'Ordered by gap × personal importance × motivation')+
+ `<div class="card">${gs.length?gs.map((g,i)=>`<div class="gap-card"><div><div class="numbered">PRIORITY ${String(i+1).padStart(2,'0')} · ${e(g.axis).toUpperCase()}</div><h3>${e(g.name)}</h3><p>Current ${visibleRating(g.current)} → Target ${visibleRating(g.target)} · Importance ${g.importance}/5 · Motivation ${g.motivation}/5</p><div class="notice" style="margin:12px 0"><strong>Practice:</strong> ${e(g.practice)}</div><details class="activity-disclosure"><summary>Work and hobby activities</summary>${I.activities(g,state.profile)}</details><label class="tiny"><input type="checkbox" data-kind="plan" data-id="${g.id}" ${state.plans.includes(g.id)?'checked':''} /> Add to my active practices</label></div><span class="gap-pill">+${g.gap}</span></div>`).join(''):`<div class="quiet">No rated capability is below its target. Assess more areas or adjust your targets for your chosen direction.</div>`}</div>`+
  `${unknown.length?`${header('Areas needing observation','Do not count missing evidence as a development deficit')}<div class="card">${unknown.map(c=>`<div class="list-row"><div><strong>${e(c.name)}</strong><div class="meta">${e(c.axis)} · Target ${visibleRating(state.targets[c.id])}</div></div>${pill('Unassessed')}</div>`).join('')}</div>`:''}`+
  `<div class="callout"><strong>How to use this plan:</strong> Choose one or two priority practices. Define an actual situation in which you can demonstrate improvement, gather evidence, and review later. A reading list alone does not establish proficiency.</div>`+
  reading();
@@ -186,7 +282,7 @@ function account(){
  '<button class="action-btn" data-action="sign-in" '+(status==='connecting'?'disabled':'')+'>Sign in with Google</button>')+
  '</div><p class="footnote space-top">Google identity does not grant a role in any organization.</p></div>'+
  '<div class="card"><div class="axis-label">Your private Google Drive</div><h3>Save progress across devices</h3>'+
- '<p>Only your self-assessed capabilities, evidence, aspiration targets and practice plans can be saved to the hidden Sovereign Lab area of your own Google Drive. Reflections and workplace reviews stay local.</p>'+
+ '<p>Your profile, self-assessments, saved history, aspiration targets and practice plans can be saved to the hidden Sovereign Lab area of your own Google Drive. Reflections and local role-review observations stay in this browser.</p>'+
  '<div class="btnrow space-top"><button class="action-btn" data-action="cloud-save" '+(!signed?'disabled':'')+'>Save to my Drive</button>'+
  '<button class="action-btn secondary" data-action="cloud-load" '+(!signed?'disabled':'')+'>Restore from my Drive</button></div>'+
  '<p class="footnote space-top">Save and restore request narrowly scoped Google Drive app-data permission. Google Drive data remains in your account; no general Drive or Gmail access is requested.</p></div></div>'+
@@ -200,9 +296,9 @@ function data(){
  header('Framework boundaries','How to interpret this prototype')+
  `<div class="card"><ul class="bullet"><li>Capability names and example targets are designed for exploration. They have not been psychometrically validated.</li><li>Separate demonstrated proficiency from missing evidence, opportunities, motivation and personal goals.</li><li>Workplace character is evaluated only through observable professional conduct — not religion, spirituality or private values.</li><li>Managers should document real examples, share criteria, invite employee response and investigate role design or resource constraints.</li><li>Never use the tool as an automated employee-ranking or employment-decision engine.</li><li>Flourishing reflections remain outside professional review and are not scored.</li></ul></div>`;
 }
-const PAGES={account:['WORKSPACE','Account & sync'],overview:['PERSONAL STUDIO','Overview'],assessment:['PERSONAL STUDIO','Capability assessment'],aspirations:['PERSONAL STUDIO','Aspirations & targets'],development:['PERSONAL STUDIO','Development plan'],reflection:['PERSONAL STUDIO','Flourishing journal'],review:['PROFESSIONAL TOOLS','Role review'],data:['WORKSPACE','Data & privacy']};
-const renderers={overview,assessment,aspirations,development,reflection,review,data,account};
-function currentPage(){const k=location.hash.slice(1);return PAGES[k]?k:'overview'}
+const PAGES={account:['WORKSPACE','Account & sync'],overview:['PERSONAL STUDIO','Overview'],profile:['PERSONAL STUDIO','Personal profile'],assessment:['PERSONAL STUDIO','Capability assessment'],'assessment-history':['PERSONAL STUDIO','Assessment history'],aspirations:['PERSONAL STUDIO','Aspirations & targets'],development:['PERSONAL STUDIO','Development plan'],reflection:['PERSONAL STUDIO','Flourishing journal'],review:['PROFESSIONAL TOOLS','Role review'],data:['WORKSPACE','Data & privacy']};
+const renderers={overview,profile,assessment,'assessment-history':assessmentHistory,aspirations,development,reflection,review,data,account};
+function currentPage(){const k=location.hash.slice(1);return Object.hasOwn(PAGES,k)?k:'overview'}
 function render(){
  const p=authConfigured&&!activeUser&&!window.SOVEREIGN_GUEST?'account':currentPage();
  document.getElementById('app').innerHTML=renderers[p]();
@@ -217,22 +313,28 @@ function clicked(ev){const b=ev.target.closest('[data-action]');if(!b)return;con
  if(action==='sign-in')window.SOVEREIGN_CLOUD?.signIn().catch(err=>toast('Sign-in failed: '+err.message));
  else if(action==='sign-out')window.SOVEREIGN_CLOUD?.signOut().catch(err=>toast('Sign-out failed: '+err.message));
  else if(action==='cloud-save'){
-  if(!confirm('Save your personal assessments and goals to your own Google Drive app-data area? Your reflections and role-review notes are excluded.'))return;
+  if(!confirm('Save your personal profile, assessments, history and goals to your own Google Drive app-data area? Your reflections and role-review notes are excluded.'))return;
   window.SOVEREIGN_CLOUD?.savePersonal(personalCloudWorkspace()).then(()=>toast('Personal profile saved.')).catch(err=>toast('Cloud save failed: '+err.message));
  }
  else if(action==='cloud-load'){
   window.SOVEREIGN_CLOUD?.loadPersonal().then(remote=>{
    if(!remote){toast('No personal backup found in your Google Drive.');return;}
-   if(!confirm('Replace local capabilities and goals with this cloud backup? Local reflections and reviews are preserved.'))return;
-   state=normalize({...state,...remote,assessmentAxis:remote.assessmentAxis,assessmentStep:remote.assessmentStep,reflections:state.reflections,review:state.review});
+   if(!confirm('Replace your local profile, assessments, history and goals with this cloud backup? Local reflections and reviews are preserved.'))return;
+   historyIndex=null;
+   state=normalize({...remote,reflections:state.reflections,review:state.review});
    save();render();toast('Personal profile restored.');
   }).catch(err=>toast('Cloud restore failed: '+err.message));
  }
  else if(action==='go'){location.hash=b.dataset.to;document.getElementById('app').focus();window.scrollTo(0,0)}
  else if(action==='axis'){reviewAxis=b.dataset.axis;render()}
- else if(action==='assessment-back'){moveAssessment(Math.max(0,assessmentAxis()-1))}
- else if(action==='assessment-revisit'){moveAssessment(0)}
- else if(action==='assessment-next'&&assessmentAxis()<AXES.length){moveAssessment(assessmentAxis()+1)}
+ else if(action==='assessment-save'){saveCompletedAssessment()}
+ else if(action==='assessment-start'&&state.assessmentSaved){setAssessmentState({...state,assessments:{},assessmentSaved:false,assessmentAxis:0},'Fresh assessment started. Your saved history is available.')}
+ else if(action==='assessment-back'&&!state.assessmentSaved){moveAssessment(Math.max(0,assessmentAxis()-1))}
+ else if(action==='assessment-next'&&!state.assessmentSaved&&assessmentAxis()<AXES.length){moveAssessment(assessmentAxis()+1)}
+ else if(action==='assessment-jump'&&!state.assessmentSaved&&state.assessmentHistory.length){
+  const index=Number(b.dataset.index);
+  if(Number.isInteger(index)&&index>=0&&index<=AXES.length)moveAssessment(index);
+ }
  else if(action==='apply-template'){const t=template(state.pendingTemplate);state.targets={...t.targets};state.goal=t.id;state.goalName=t.name;save();render();toast('Aspiration targets updated. Your assessments remain unchanged.')}
  else if(action==='save-snapshot'){state.history.push({date:new Date().toISOString(),name:state.goalName||'Custom direction',goal:state.goal,targets:{...state.targets}});state.history=state.history.slice(-100);save();render();toast('Aspiration snapshot saved.')}
  else if(action==='restore-snapshot'){const snap=state.history[Number(b.dataset.index)];if(!snap)return;if(!confirm('Restore these historical targets? Your current assessment will remain unchanged.'))return;state.targets={...snap.targets};state.goal=snap.goal;state.goalName=snap.name;save();render();toast('Historical targets restored.')}
@@ -240,17 +342,24 @@ function clicked(ev){const b=ev.target.closest('[data-action]');if(!b)return;con
  else if(action==='export-review')exportReview();
  else if(action==='print')window.print();
  else if(action==='clear-review'){if(!confirm('Clear all local observations in the role review workspace?'))return;state.review={person:'',observer:'',role:state.review.role,ratings:{},notes:''};save();render();toast('Review workspace cleared.')}
- else if(action==='reset'){if(!confirm('Delete all locally saved assessments, aspirations, journal entries and reviews? This cannot be undone.'))return;state=makeDefault();save();render();toast('Local workspace reset.')}
+ else if(action==='reset'){if(!confirm('Delete all locally saved assessments, aspirations, journal entries and reviews? This cannot be undone.'))return;historyIndex=null;state=makeDefault();save();render();toast('Local workspace reset.')}
 }
 function changed(ev){const x=ev.target,kind=x.dataset.kind;if(!kind)return;
  if(kind==='assessment'){
   const step=assessmentAxis(),capability=byId(x.dataset.id);
-  if(!capability||capability.axis!==AXES[step]?.id)return;
+  if(state.assessmentSaved||!capability||capability.axis!==AXES[step]?.id)return;
   state.assessmentAxis=step;
   const entry=a(capability.id),property=x.dataset.prop;
   entry[property]=property==='current'?asRating(x.value):property==='evidence'?x.value:clamp(x.value,1,5);
   save();
  }
+ else if(kind==='assessment-mode'&&!state.assessmentSaved){state.assessmentMode=normalizeMode(x.value);save();render();document.getElementById('assessment-mode').focus()}
+ else if(kind==='assessment-history'){
+  const index=Number(x.value);
+  if(Number.isInteger(index)&&state.assessmentHistory[index]){historyIndex=index;render();document.getElementById('history-assessment').focus()}
+ }
+ else if(kind==='profile'&&Object.hasOwn(profileFields,x.dataset.prop)){state.profile[x.dataset.prop]=x.value.slice(0,profileFields[x.dataset.prop][1]);save()}
+ else if(kind==='profile-benchmark'){state.profile.roleTemplate=TEMPLATES.find(item=>item.id===x.value)?.id||'';save()}
  else if(kind==='target'){state.targets[x.dataset.id]=clamp(x.value,0,4);state.goal='custom';save();render()}
  else if(kind==='template'){state.pendingTemplate=template(x.value).id;save();render()}
  else if(kind==='goalName'){state.goalName=x.value.slice(0,120);save()}
@@ -263,14 +372,21 @@ function changed(ev){const x=ev.target,kind=x.dataset.kind;if(!kind)return;
 }
 document.addEventListener('click',clicked);
 document.addEventListener('change',changed);
-document.addEventListener('input',ev=>{const k=ev.target.dataset.kind;if(['assessment','goalName','reflection','reviewEvidence','reviewText'].includes(k)&&['TEXTAREA','INPUT'].includes(ev.target.tagName))changed(ev)});
-document.addEventListener('change',async ev=>{if(ev.target.id!=='importFile')return;const file=ev.target.files?.[0];if(!file)return;try{const raw=JSON.parse(await file.text());if(raw.format!=='sovereign-lab-backup'||raw.state?.schema!==1)throw Error('Not a supported personal backup file.');if(!confirm('Replace the entire locally saved workspace with this backup?'))return;state=normalize(raw.state);save();render();toast('Backup restored.')}catch(err){toast('Import failed: '+err.message)}finally{ev.target.value=''}});
+document.addEventListener('input',ev=>{const k=ev.target.dataset.kind;if(['assessment','profile','goalName','reflection','reviewEvidence','reviewText'].includes(k)&&['TEXTAREA','INPUT'].includes(ev.target.tagName))changed(ev)});
+document.addEventListener('change',async ev=>{if(ev.target.id!=='importFile')return;const file=ev.target.files?.[0];if(!file)return;try{const raw=JSON.parse(await file.text());if(raw.format!=='sovereign-lab-backup'||raw.state?.schema!==1)throw Error('Not a supported personal backup file.');if(!confirm('Replace the entire locally saved workspace with this backup?'))return;historyIndex=null;state=normalize(raw.state);save();render();toast('Backup restored.')}catch(err){toast('Import failed: '+err.message)}finally{ev.target.value=''}});
 window.addEventListener('sovereign-auth-change',ev=>{
  const next=ev.detail?.user||null,prior=activeUser?.uid||null;
  activeUser=next;
- if(authConfigured&&(next?.uid||null)!==prior)state=next?readLocal(storageKey()):makeDefault();
+ if(authConfigured&&(next?.uid||null)!==prior){
+  historyIndex=null;
+  guestLoaded=!next&&!!window.SOVEREIGN_GUEST;
+  state=next||guestLoaded?readLocal(storageKey()):makeDefault();
+ }
  render();
 });
-window.addEventListener('hashchange',()=>{render();window.scrollTo({top:0,behavior:'auto'})});
+window.addEventListener('hashchange',()=>{
+ if(!activeUser&&window.SOVEREIGN_GUEST&&!guestLoaded){state=readLocal(BASE_KEY);guestLoaded=true}
+ render();window.scrollTo({top:0,behavior:'auto'});
+});
 render();
 })();

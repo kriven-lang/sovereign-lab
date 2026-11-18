@@ -25,7 +25,8 @@ Do not use real personnel data before completing the access-control tests below.
 7. Create at least three members: an HR administrator, a manager, and an employee.
    Members must be confirmed as belonging to the intended organization.
 8. HR enters the organization ID, chooses the employee, manager and cycle, then
-   assigns a review. Each participant sees only their assigned reviews.
+   assigns a review. Participants can open their assigned reviews and completed
+   history.
 9. Employee and manager save independent drafts and submit. The first submission
    remains inaccessible to the other party until the second submission is locked.
 10. Both can then review differences and record attributed notes. HR can finalize.
@@ -42,6 +43,41 @@ descriptions and evidence guidance. At least three competencies must be rated
 and each rating needs evidence of at least 12 characters. The interface displays
 levels 1–5. Firestore continues to store equivalent scores 0–4 and validates the
 ratings and evidence independently of the interface.
+
+Participants who previously completed a finalized review for the same employee
+can jump between assessment axes in a repeat cycle. Every selected rating still
+needs evidence before submission.
+
+## Finalized history and reporting scope
+
+The organization workspace groups finalized cycles by employee and shows how
+many finalized cycles are visible and which cycle was finalized most recently.
+HR also sees the team and department from the trusted member profile when
+available.
+
+A trusted provisioning administrator can grant a manager read-only access to
+finalized comparisons for specific employee UIDs. Verify the organization's
+reporting lines and list every employee whose finalized reviews the manager is
+approved to see, including any approved indirect reports. Provision the scoped
+employees as active members of the same organization before granting access.
+
+```sh
+node scripts/provision-member.mjs example-org manager-uid manager --review-scope employee-uid another-employee-uid
+```
+
+Use the same secure credentials and membership confirmation as ordinary member
+provisioning. The flag replaces the manager's complete scope. Use
+`--review-scope` without any UIDs to revoke it. Omitting the flag preserves a
+manager's existing scope, and changing the member to another role clears it.
+The manager's regular assigned reviews continue to follow participant permissions.
+
+Managers with a reporting scope can view finalized cycles and the paired,
+locked submissions for those employees. Review assignment, employee drafts,
+discussion, and HR finalization keep their existing role restrictions. The
+scope applies to archived cycles as well as future ones. Each Firestore read and
+query checks the current scope, so revocation blocks new server reads immediately.
+Refresh reviews to update a workspace that is already open. This access applies
+only to organizational Firestore reviews.
 
 ## Safeguards and remaining work
 

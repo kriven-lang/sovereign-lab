@@ -32,6 +32,10 @@ service cloud.firestore {
       get(reviewPath(org,reviewId)).data.managerUid
     ];
   }
+  function openReviewParticipant(org,reviewId,uid) {
+   let review = get(reviewPath(org,reviewId)).data;
+   return review.status == 'open' && uid in [review.employeeUid,review.managerUid];
+  }
   function paired(org,reviewId) {
    let r = get(reviewPath(org,reviewId)).data;
    return exists(submissionPath(org,reviewId,r.employeeUid))
@@ -39,42 +43,65 @@ service cloud.firestore {
     && get(submissionPath(org,reviewId,r.employeeUid)).data.submitted == true
     && get(submissionPath(org,reviewId,r.managerUid)).data.submitted == true;
   }
-  function validRating(r,id,submitted) {
-   return !(id in r) || (
-     r[id] is map && r[id].keys().hasOnly(['score','evidence'])
-     && r[id].keys().hasAll(['score','evidence'])
-     && r[id].score is int && r[id].score >= 0 && r[id].score <= 4
-     && r[id].evidence is string
-     && r[id].evidence.size() <= 2000
-     && (!submitted || r[id].evidence.size() >= 12)
-   );
+  function scopedManager(org,review) {
+   let member = get(memberPath(org)).data;
+   let scope = member.get('reviewEmployeeUids', []);
+   return member.role == 'manager' && scope is list
+    && review.status == 'finalized' && review.employeeUid in scope;
   }
+  function scopedSubmission(org,reviewId,uid) {
+   let review = get(reviewPath(org,reviewId)).data;
+   return active(org) && scopedManager(org,review)
+    && uid in [review.employeeUid,review.managerUid] && paired(org,reviewId);
+  }
+  function validRatingFields(rating,minEvidence,scores) {
+   let score = rating.score;
+   let evidence = rating.evidence;
+   let evidenceSize = evidence.size();
+   // The two required fields and exact size exclude additional fields.
+   return [
+    rating is map,
+    rating.size() == 2,
+    score is int,
+    score in scores,
+    evidence is string,
+    evidenceSize <= 2000,
+    evidenceSize >= minEvidence
+   ].hasOnly([true]);
+  }
+  // Group the rating checks to keep all 16 within the rules evaluation limit.
   function validSubmission(uid) {
-   return request.resource.data.keys().hasOnly(['authorUid','ratings','submitted','updatedAt'])
-    && request.resource.data.keys().hasAll(['authorUid','ratings','submitted','updatedAt'])
-    && request.resource.data.authorUid == uid
-    && request.resource.data.submitted is bool
-    && request.resource.data.updatedAt == request.time
-    && request.resource.data.ratings is map
-    && request.resource.data.ratings.size() <= 16
-    && request.resource.data.ratings.keys().hasOnly(['comprehension','evaluation','generation','reframing','metacognition','observation','execution','experimentation','construction','transformation','honesty','accountability','fairness','courage','discernment','stewardship'])
-    && (!request.resource.data.submitted || request.resource.data.ratings.size() >= 3)
-      && validRating(request.resource.data.ratings,'comprehension',request.resource.data.submitted)
-      && validRating(request.resource.data.ratings,'evaluation',request.resource.data.submitted)
-      && validRating(request.resource.data.ratings,'generation',request.resource.data.submitted)
-      && validRating(request.resource.data.ratings,'reframing',request.resource.data.submitted)
-      && validRating(request.resource.data.ratings,'metacognition',request.resource.data.submitted)
-      && validRating(request.resource.data.ratings,'observation',request.resource.data.submitted)
-      && validRating(request.resource.data.ratings,'execution',request.resource.data.submitted)
-      && validRating(request.resource.data.ratings,'experimentation',request.resource.data.submitted)
-      && validRating(request.resource.data.ratings,'construction',request.resource.data.submitted)
-      && validRating(request.resource.data.ratings,'transformation',request.resource.data.submitted)
-      && validRating(request.resource.data.ratings,'honesty',request.resource.data.submitted)
-      && validRating(request.resource.data.ratings,'accountability',request.resource.data.submitted)
-      && validRating(request.resource.data.ratings,'fairness',request.resource.data.submitted)
-      && validRating(request.resource.data.ratings,'courage',request.resource.data.submitted)
-      && validRating(request.resource.data.ratings,'discernment',request.resource.data.submitted)
-      && validRating(request.resource.data.ratings,'stewardship',request.resource.data.submitted);
+   let submission = request.resource.data;
+   let ratings = submission.ratings;
+   let submitted = submission.submitted;
+   let minEvidence = submitted ? 12 : 0;
+   let scores = [0,1,2,3,4];
+   // The four required fields and exact size exclude additional fields.
+   return submission.size() == 4
+    && submission.authorUid == uid
+    && submitted is bool
+    && submission.updatedAt == request.time
+    && ratings is map
+    && ratings.keys().hasOnly(['comprehension','evaluation','generation','reframing','metacognition','observation','execution','experimentation','construction','transformation','honesty','accountability','fairness','courage','discernment','stewardship'])
+    && (!submitted || ratings.size() >= 3)
+    && [
+      ('comprehension' in ratings ? validRatingFields(ratings.comprehension,minEvidence,scores) : true),
+      ('evaluation' in ratings ? validRatingFields(ratings.evaluation,minEvidence,scores) : true),
+      ('generation' in ratings ? validRatingFields(ratings.generation,minEvidence,scores) : true),
+      ('reframing' in ratings ? validRatingFields(ratings.reframing,minEvidence,scores) : true),
+      ('metacognition' in ratings ? validRatingFields(ratings.metacognition,minEvidence,scores) : true),
+      ('observation' in ratings ? validRatingFields(ratings.observation,minEvidence,scores) : true),
+      ('execution' in ratings ? validRatingFields(ratings.execution,minEvidence,scores) : true),
+      ('experimentation' in ratings ? validRatingFields(ratings.experimentation,minEvidence,scores) : true),
+      ('construction' in ratings ? validRatingFields(ratings.construction,minEvidence,scores) : true),
+      ('transformation' in ratings ? validRatingFields(ratings.transformation,minEvidence,scores) : true),
+      ('honesty' in ratings ? validRatingFields(ratings.honesty,minEvidence,scores) : true),
+      ('accountability' in ratings ? validRatingFields(ratings.accountability,minEvidence,scores) : true),
+      ('fairness' in ratings ? validRatingFields(ratings.fairness,minEvidence,scores) : true),
+      ('courage' in ratings ? validRatingFields(ratings.courage,minEvidence,scores) : true),
+      ('discernment' in ratings ? validRatingFields(ratings.discernment,minEvidence,scores) : true),
+      ('stewardship' in ratings ? validRatingFields(ratings.stewardship,minEvidence,scores) : true)
+    ].hasOnly([true]);
   }
   match /organizations/{org}/members/{uid} {
    allow get: if active(org) && (uid == request.auth.uid || hr(org));
@@ -84,7 +111,8 @@ service cloud.firestore {
   match /organizations/{org}/reviews/{reviewId} {
    allow get, list: if active(org) && (hr(org)
     || request.auth.uid == resource.data.employeeUid
-    || request.auth.uid == resource.data.managerUid);
+    || request.auth.uid == resource.data.managerUid
+    || scopedManager(org,resource.data));
    allow create: if hr(org)
     && request.resource.data.keys().hasOnly(['employeeUid','managerUid','cycle','status','createdBy','createdAt'])
     && request.resource.data.keys().hasAll(['employeeUid','managerUid','cycle','status','createdBy','createdAt'])
@@ -111,16 +139,12 @@ service cloud.firestore {
    allow delete: if false;
    match /submissions/{uid} {
     allow get: if (participant(org,reviewId) && uid == request.auth.uid)
-     || ((participant(org,reviewId) || hr(org)) && paired(org,reviewId));
+     || ((participant(org,reviewId) || hr(org)) && paired(org,reviewId))
+     || scopedSubmission(org,reviewId,uid);
     allow list: if false;
-    allow create: if participant(org,reviewId)
-     && uid == request.auth.uid
-     && get(reviewPath(org,reviewId)).data.status == 'open'
-     && validSubmission(uid);
-    allow update: if participant(org,reviewId)
-     && uid == request.auth.uid
-     && resource.data.submitted == false
-     && get(reviewPath(org,reviewId)).data.status == 'open'
+    allow create, update: if active(org) && uid == request.auth.uid
+     && (resource == null || resource.data.submitted == false)
+     && openReviewParticipant(org,reviewId,uid)
      && validSubmission(uid);
     allow delete: if false;
    }

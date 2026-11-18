@@ -42,7 +42,7 @@ async function existing(){
 }
 async function savePersonal(workspace){
  requireAuth();
- if(workspace?.schema!==1||JSON.stringify(workspace).length>450000)throw Error('Invalid or oversized personal workspace.');
+ if(workspace?.schema!==1||JSON.stringify(workspace).length>4_000_000)throw Error('Invalid or oversized personal workspace.');
  await driveConsent();
  let file=await existing();
  if(!file){

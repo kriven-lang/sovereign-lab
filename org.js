@@ -18,6 +18,9 @@ const notice=(message,warning=false)=>'<div class="notice'+(warning?' warning':'
 const path=(...p)=>['organizations',state.orgId,...p];
 const isHr=()=>['hr','admin'].includes(state.member?.role);
 const isParticipant=r=>r&&(r.employeeUid===me()?.uid||r.managerUid===me()?.uid);
+const reportingScope=()=>state.member?.role==='manager'&&Array.isArray(state.member.reviewEmployeeUids)?state.member.reviewEmployeeUids:[];
+const canReadScopedReview=r=>r.status==='finalized'&&reportingScope().includes(r.employeeUid);
+const hasDirectAccess=r=>isHr()||isParticipant(r);
 function clearSelection(){
  state.selected=null;state.own=null;state.other=null;state.comments=[];state.draft={};
  state.assessmentStep=0;state.editingSummary=false;state.assessmentError=null;state.assessmentMessage='';
@@ -39,10 +42,7 @@ async function connect(orgId){
   const id=String(orgId||'').trim();
   if(!/^[A-Za-z0-9_-]{3,48}$/.test(id))throw Error('Enter the organization ID given to you by HR (3–48 letters, numbers, _ or -).');
   state.orgId=id;
-  const snap=await sdk.getDoc(dref('members',me().uid));
-  if(!snap.exists()||snap.data().active!==true)throw Error('You do not have an active membership for this organization. Ask HR for an invitation.');
-  if(snap.data().email?.toLowerCase()!==me().email?.toLowerCase())throw Error('Your Google identity does not match the approved membership.');
-  state.member=snap.data();clearSelection();
+  state.reviews=[];state.members=[];clearSelection();
   await refresh();
   if(isHr())await loadMembers();
   state.message='Membership verified. Reviews are limited to your authorized scope.';
@@ -56,13 +56,42 @@ async function loadMembers(){
 }
 async function refresh(){
  await prepare();
- if(!state.member)throw Error('Connect to your authorized organization first.');
- const c=crefs('reviews'),uid=me().uid;
- const snapshots=isHr()?[await sdk.getDocs(c)]:
- await Promise.all([
-  sdk.getDocs(sdk.query(c,sdk.where('employeeUid','==',uid))),
-  sdk.getDocs(sdk.query(c,sdk.where('managerUid','==',uid)))
- ]);
+ if(!state.orgId)throw Error('Connect to your authorized organization first.');
+ const orgId=state.orgId,uid=me().uid;
+ const current=()=>state.orgId===orgId&&me()?.uid===uid;
+ let membership;
+ try{
+  const snapshot=await sdk.getDocFromServer(dref('members',uid));
+  membership=snapshot.data();
+  if(membership?.active!==true||membership.email!==me()?.email)throw Error('You do not have an active membership for this organization. Ask HR for an invitation.');
+ }catch(err){
+  if(current()){state.member=null;state.reviews=[];state.members=[];clearSelection();}
+  throw err;
+ }
+ if(!current())return;
+ state.member=membership;
+ if(!isHr())state.members=[];
+ state.reviews=state.reviews.filter(r=>hasDirectAccess(r)||canReadScopedReview(r));
+ if(state.selected&&!hasDirectAccess(state.selected)&&!canReadScopedReview(state.selected))clearSelection();
+ const c=crefs('reviews');
+ const queries=isHr()?[c]:[
+  sdk.query(c,sdk.where('employeeUid','==',uid)),
+  sdk.query(c,sdk.where('managerUid','==',uid))
+ ];
+ const scope=reportingScope();
+ for(let start=0;start<scope.length;start+=30){
+  queries.push(sdk.query(c,sdk.where('employeeUid','in',scope.slice(start,start+30)),sdk.where('status','==','finalized')));
+ }
+ let snapshots;
+ try{snapshots=await Promise.all(queries.map(query=>sdk.getDocsFromServer(query)));}
+ catch(err){
+  if(current()){
+   state.reviews=state.reviews.filter(hasDirectAccess);
+   if(state.selected&&!hasDirectAccess(state.selected))clearSelection();
+  }
+  throw err;
+ }
+ if(!current())return;
  const unique=new Map();
  for(const snap of snapshots)for(const d of snap.docs)unique.set(d.id,{id:d.id,...d.data()});
  state.reviews=Array.from(unique.values()).sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
@@ -83,7 +112,15 @@ async function createReview(employeeUid,managerUid,cycle){
 async function openReview(id){
  await prepare();
  const orgId=state.orgId,uid=me().uid;
- const snap=await sdk.getDoc(dref('reviews',id));
+ let snap;
+ try{snap=await sdk.getDocFromServer(dref('reviews',id));}
+ catch(err){
+  if(err?.code==='permission-denied'&&state.orgId===orgId&&me()?.uid===uid){
+   state.reviews=state.reviews.filter(r=>r.id!==id);
+   if(state.selected?.id===id)clearSelection();
+  }
+  throw err;
+ }
  if(state.orgId!==orgId||me()?.uid!==uid)return;
  if(!snap.exists())throw Error('Review does not exist or is not authorized.');
  clearSelection();
@@ -98,11 +135,11 @@ async function openReview(id){
    state.assessmentStep=incomplete===-1?Math.max(0,lastRated):incomplete;
   }
  }
- if(isParticipant(r)?state.own?.submitted:isHr()){
+ if(isParticipant(r)?state.own?.submitted:(isHr()||canReadScopedReview(r))){
   // The other participant's data can be fetched ONLY after both have submitted.
   try{
    const ids=isParticipant(r)?[uid===r.employeeUid?r.managerUid:r.employeeUid]:[r.employeeUid,r.managerUid];
-   const snapshots=await Promise.all(ids.map(i=>sdk.getDoc(dref('reviews',id,'submissions',i))));
+   const snapshots=await Promise.all(ids.map(i=>sdk.getDocFromServer(dref('reviews',id,'submissions',i))));
    if(state.selected!==r)return;
    if(isParticipant(r)){
     state.other=snapshots[0].exists()?snapshots[0].data():null;
@@ -111,7 +148,7 @@ async function openReview(id){
    }
   }catch(err){if(err?.code!=='permission-denied')console.info('Second submission not yet available',err)}
   if(state.selected!==r)return;
-  if(state.own?.submitted&&state.other?.submitted){
+  if(state.own?.submitted&&state.other?.submitted&&hasDirectAccess(r)){
    try{
     const entries=await sdk.getDocs(crefs('reviews',id,'discussion'));
     if(state.selected!==r)return;
@@ -158,6 +195,7 @@ async function saveDraft(submit){
  }
 }
 async function discuss(text){
+ if(!hasDirectAccess(state.selected))throw Error('Only review participants and HR can add a discussion note.');
  if(!state.selected||!state.own?.submitted||!state.other?.submitted)throw Error('Both submissions must be locked before reconciliation.');
  const msg=String(text||'').trim();
  if(msg.length<10||msg.length>2500)throw Error('Enter a discussion note of 10–2500 characters.');
@@ -177,7 +215,26 @@ async function finalize(){
  state.message='Review finalized by HR.';
  await refresh();await openReview(state.selected.id);
 }
-function statusLine(r){return esc(r.cycle)+' · '+esc(r.status==='finalized'?'Finalized':'Open')}
+function reviewHistory(){
+ const groups=new Map();
+ const finalized=state.reviews.filter(r=>r.status==='finalized')
+  .sort((a,b)=>(b.finalizedAt?.seconds||b.createdAt?.seconds||0)-(a.finalizedAt?.seconds||a.createdAt?.seconds||0));
+ for(const r of finalized){
+  if(!groups.has(r.employeeUid))groups.set(r.employeeUid,[]);
+  groups.get(r.employeeUid).push(r);
+ }
+ const cards=Array.from(groups,([uid,reviews])=>{
+  const member=isHr()?state.members.find(m=>m.uid===uid):null;
+  const name=member?.name||(uid===me()?.uid?me()?.displayName:'')||uid;
+  const team=[member?.department,member?.team].filter(value=>value&&value!=='Unassigned').join(' · ');
+  return '<div class="card"><h3>'+esc(name)+'</h3><p>'+reviews.length+(reviews.length===1?' finalized cycle':' finalized cycles')+
+   ' · Latest '+esc(reviews[0].cycle)+(team?' · '+esc(team):'')+'</p>'+
+   reviews.map(r=>'<div class="list-row"><div><strong>'+esc(r.cycle)+'</strong><div class="meta">Manager '+esc(r.managerUid)+'</div></div>'+
+    '<button class="action-btn secondary" data-org="open" data-id="'+esc(r.id)+'" aria-label="Open '+esc(r.cycle)+' for '+esc(name)+'">Open</button></div>').join('')+'</div>';
+ });
+ return '<div class="section-head"><h2>Finalized review history</h2></div>'+
+  (cards.length?'<div class="grid">'+cards.join('')+'</div>':'<div class="card"><p>No finalized reviews in your authorized scope.</p></div>');
+}
 function render(){
  const issue=state.error?notice(state.error,true):'';
  state.error='';
@@ -190,9 +247,10 @@ function render(){
  issue+(state.message?notice(state.message):'')+
  '<div class="notice warning"><strong>Integrity and instruction adherence:</strong> Review observed, context-specific conduct—not inherent morality or blind obedience. Legitimate dissent and refusal of unsafe directions must not be penalized. Scores require supporting evidence and can be challenged.</div>';
  const hr=isHr()?hrPanel():'';
+ const open=state.reviews.filter(r=>r.status==='open');
  const list='<div class="section-head"><h2>Review assignments</h2></div><div class="card">'+
- (state.reviews.length?state.reviews.map(r=>'<div class="list-row"><div><strong>'+statusLine(r)+'</strong><div class="meta">Employee '+esc(r.employeeUid)+' · Manager '+esc(r.managerUid)+'</div></div><button class="action-btn secondary" data-org="open" data-id="'+esc(r.id)+'">Open</button></div>').join(''):'<p>No reviews assigned or visible in this organization.</p>')+'</div>';
- return header+hr+list+(state.selected?reviewPanel():'')+'</div>';
+ (open.length?open.map(r=>'<div class="list-row"><div><strong>'+esc(r.cycle)+'</strong><div class="meta">Employee '+esc(r.employeeUid)+' · Manager '+esc(r.managerUid)+'</div></div><button class="action-btn secondary" data-org="open" data-id="'+esc(r.id)+'">Open</button></div>').join(''):'<p>No open review assignments in your authorized scope.</p>')+'</div>';
+ return header+hr+list+reviewHistory()+(state.selected?reviewPanel():'')+'</div>';
 }
 function startForm(){
  return '<div class="card"><h2>Organization access</h2><p>Personal Gmail accounts cannot enter this workspace. Email alone does not grant any rights.</p>'+
@@ -211,30 +269,52 @@ function hrPanel(){
 function levelLabel(id,entry){
  return rubric().label(id,entry?.score);
 }
+function capabilityNames(entries){
+ const names=entries.slice(0,3).map(c=>c.name).join(', ');
+ return names+(entries.length>3?' and '+(entries.length-3)+' more':'');
+}
 function comparePanel(){
- if(!state.own?.submitted||!state.other?.submitted)return notice('Independent submissions are still embargoed. Comparison unlocks after both assigned participants have submitted.');
+ const canDiscuss=hasDirectAccess(state.selected);
+ if(!state.own?.submitted||!state.other?.submitted)return notice(canDiscuss?'Independent submissions are still embargoed. Comparison unlocks after both assigned participants have submitted.':'The paired finalized submissions are unavailable.');
  const selfIsEmployee=state.own.authorUid===state.selected.employeeUid;
  const employee=selfIsEmployee?state.own:state.other,manager=selfIsEmployee?state.other:state.own;
- const rows=caps().filter(c=>employee.ratings?.[c.id]||manager.ratings?.[c.id]).map(c=>{
+ const entries=caps();
+ const employeeRated=entries.filter(c=>hasScore(employee.ratings?.[c.id]));
+ const managerRated=entries.filter(c=>hasScore(manager.ratings?.[c.id]));
+ const compared=employeeRated.filter(c=>hasScore(manager.ratings?.[c.id]));
+ const difference=c=>Math.abs(employee.ratings[c.id].score-manager.ratings[c.id].score);
+ const largest=Math.max(0,...compared.map(difference));
+ const focus=compared.filter(c=>difference(c)===largest);
+ const comparisonNote=largest?'Compare the examples for '+capabilityNames(focus)+', where the ratings differed most.':
+  compared.length?'The employee and manager gave the same level for each capability both assessed.':'The participants assessed different capabilities.';
+ const rows=entries.filter(c=>employee.ratings?.[c.id]||manager.ratings?.[c.id]).map(c=>{
   const left=employee.ratings?.[c.id],right=manager.ratings?.[c.id];
   return '<div class="review-row"><div><strong>'+esc(c.name)+'</strong><p>Employee · '+esc(levelLabel(c.id,left))+(left?' · '+esc(left.evidence):'')+'</p>'+
    '<p>Manager · '+esc(levelLabel(c.id,right))+(right?' · '+esc(right.evidence):'')+'</p></div>'+
    '<span class="tag">'+(left&&right?'Difference '+Math.abs(left.score-right.score):'Not comparable')+'</span></div>';
  }).join('');
- return '<div class="section-head"><h2>Shared comparison & reconciliation</h2></div>'+
- '<div class="card">'+(rows||'<p>No evaluated competencies.</p>')+'</div>'+
- '<div class="card"><h3>Review discussion history</h3>'+
+ return '<div class="section-head"><h2>'+(canDiscuss?'Shared comparison & reconciliation':'Finalized comparison')+'</h2></div>'+
+ '<div class="card"><h3>Assessment coverage</h3><p>Employee '+employeeRated.length+' of '+entries.length+' · Manager '+managerRated.length+' of '+entries.length+
+  ' · Rated by both '+compared.length+'</p><p>'+esc(comparisonNote)+'</p>'+(rows||'<p>No evaluated competencies.</p>')+'</div>'+
+ (canDiscuss?'<div class="card"><h3>Review discussion history</h3>'+
  (state.comments.length?state.comments.map(x=>'<div class="list-row"><div><strong>'+esc(x.authorUid)+'</strong><p>'+esc(x.text)+'</p></div></div>').join(''):'<p class="muted">No reconciliation notes yet.</p>')+
  '<label class="space-top" for="org-comment">Clarification, disagreement, action or acknowledgment</label>'+
  '<textarea class="input" id="org-comment" rows="3" maxlength="2500" placeholder="Document the difference, evidence, next steps, or reservations."></textarea>'+
  '<div class="btnrow space-top"><button class="action-btn" data-org="comment">Add signed discussion note</button>'+
- (isHr()&&state.selected.status==='open'?'<button class="action-btn secondary" data-org="finalize">HR: finalize record</button>':'')+'</div></div>';
+ (isHr()&&state.selected.status==='open'?'<button class="action-btn secondary" data-org="finalize">HR: finalize record</button>':'')+'</div></div>':'');
+}
+function repeatAssessment(){
+ const selected=state.selected;
+ return isParticipant(selected)&&state.reviews.some(r=>r.id!==selected.id&&r.status==='finalized'&&
+  r.employeeUid===selected.employeeUid&&isParticipant(r));
 }
 function assessmentSummary(locked){
  const entries=caps();
  const rated=entries.filter(c=>hasScore(state.draft[c.id]));
- const incomplete=rated.some(c=>!hasEvidence(state.draft[c.id]));
- const issue=rated.length<3?'Assess at least three capabilities before submitting.':incomplete?'Add at least 12 characters of evidence for each assessed capability.':'';
+ const evidenced=rated.filter(c=>hasEvidence(state.draft[c.id]));
+ const highest=Math.max(-1,...evidenced.map(c=>Number(state.draft[c.id].score)));
+ const strongest=evidenced.filter(c=>Number(state.draft[c.id].score)===highest);
+ const issue=rated.length<3?'Assess at least three capabilities before submitting.':rated.length!==evidenced.length?'Add at least 12 characters of evidence for each assessed capability.':'';
  const rows=entries.map(c=>{
   const entry=state.draft[c.id];
   const details=hasScore(entry)?'<p>'+esc(entry.evidence||'')+'</p>'+(!hasEvidence(entry)&&!locked?'<p>Supporting evidence needed</p>':''):'';
@@ -242,7 +322,8 @@ function assessmentSummary(locked){
    (locked?'':'<button class="action-btn secondary" data-org="edit-assessment" data-id="'+esc(c.id)+'" aria-label="Edit '+esc(c.name)+'">Edit</button>')+'</div>';
  }).join('');
  return '<div class="card">'+
-  '<p>'+rated.length+' of '+entries.length+' capabilities assessed.</p>'+rows+
+  '<p>'+rated.length+' of '+entries.length+' capabilities assessed. '+evidenced.length+' have supporting evidence.</p>'+
+  (strongest.length?'<p>Highest evidenced ratings in '+esc(capabilityNames(strongest))+'.</p>':'')+rows+
   (locked?'':(issue?notice(issue,true):'')+
   '<div class="btnrow space-top"><button class="action-btn secondary" data-org="previous-assessment">Previous</button>'+
   '<button class="action-btn secondary" data-org="save">Save private draft</button>'+
@@ -267,6 +348,8 @@ function assessmentAxis(axis){
  const nextLabel=state.editingSummary?'Back to review':next?'Next · '+next.name:'Review assessment';
  return '<div class="card assessment-axis"><div class="assessment-progress"><span>Axis '+(step+1)+' of '+allAxes.length+'</span></div>'+
   '<progress class="assessment-progress-bar" max="'+allAxes.length+'" value="'+(step+1)+'" aria-label="Assessment progress"></progress>'+
+  (repeatAssessment()?'<nav class="tabs" aria-label="Assessment sections">'+allAxes.map((item,index)=>
+   '<button class="tab'+(index===step?' active':'')+'" data-org="jump-assessment" data-step="'+index+'"'+(index===step?' aria-current="step"':'')+'>'+esc(item.name)+'</button>').join('')+'</nav>':'')+
   '<h3 id="org-assessment-axis" tabindex="-1">'+esc(axis.name)+'</h3>'+
   '<p id="org-evidence-hint">Leave a capability as Not assessed if you cannot rate it. Provide at least 12 characters of evidence for each selected level.</p>'+
   '<div class="cap-list space-top">'+axisCaps(axis.id).map(assessmentCapability).join('')+'</div>'+
@@ -305,6 +388,7 @@ function reviewPanel(){
  const r=state.selected,participant=isParticipant(r),isLocked=state.own?.submitted||r.status==='finalized';
  return '<div class="section-head"><h2>Selected review: '+esc(r.cycle)+'</h2></div>'+
  '<div class="notice">Employee '+esc(r.employeeUid)+' · Manager '+esc(r.managerUid)+' · '+esc(r.status)+'</div>'+
+ (!hasDirectAccess(r)?notice('Read-only finalized review in your reporting scope.'):'')+
  (participant?assessmentPanel(isLocked):'')+comparePanel();
 }
 async function run(fn){state.loading=true;state.error='';try{await fn();}catch(err){error(err);return}state.loading=false;notify();}
@@ -321,7 +405,7 @@ document.addEventListener('click',ev=>{
  const action=b.dataset.org;
  if(state.loading)return;
  if(action==='connect')return run(()=>connect(document.getElementById('org-id')?.value));
- if(action==='leave'){state.orgId='';state.member=null;state.reviews=[];clearSelection();notify();return}
+ if(action==='leave'){state.orgId='';state.member=null;state.reviews=[];state.members=[];clearSelection();notify();return}
  if(action==='refresh')return run(async()=>{
   const review=state.selected;
   await refresh();
@@ -332,6 +416,10 @@ document.addEventListener('click',ev=>{
  if(isParticipant(state.selected)&&state.selected.status==='open'&&!state.own?.submitted){
   if(action==='previous-assessment'&&state.assessmentStep>0)return editAssessmentStep(state.assessmentStep-1);
   if(action==='next-assessment')return advanceAssessment();
+  if(action==='jump-assessment'&&repeatAssessment()&&state.assessmentStep<axes().length){
+   const step=Number(b.dataset.step);
+   if(axes()[step]&&step!==state.assessmentStep)return editAssessmentStep(step);
+  }
   if(action==='edit-assessment'&&state.assessmentStep===axes().length){
    const capability=caps().find(c=>c.id===b.dataset.id);
    if(capability)return editAssessmentStep(axes().findIndex(axis=>axis.id===capability.axis),capability.id);
@@ -342,7 +430,7 @@ document.addEventListener('click',ev=>{
  if(action==='comment')return run(()=>discuss(document.getElementById('org-comment')?.value));
  if(action==='finalize')return run(()=>finalize());
 });
-window.addEventListener('sovereign-auth-change',()=>{state.orgId='';state.member=null;state.reviews=[];clearSelection();notify()});
+window.addEventListener('sovereign-auth-change',()=>{state.orgId='';state.member=null;state.reviews=[];state.members=[];clearSelection();notify()});
 window.SOVEREIGN_ORG={render,get state(){return state},connect,refresh,openReview};
 notify();
 })();

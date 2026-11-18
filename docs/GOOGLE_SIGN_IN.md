@@ -17,14 +17,16 @@ when users choose a cloud save or restore. No Gmail inbox or full Google Drive a
 5. Set public Web app values in `firebase-config.js`: `apiKey`, `authDomain`,
    `projectId`, `appId`. NEVER paste OAuth client secrets, API private keys,
    service account JSON, or database admin credentials into GitHub.
-6. Open the GitHub Pages website, choose Personal sign-in, and select **Save
-   personal profile**. Google requests narrowly scoped Drive app-data consent
+6. Open the GitHub Pages website, choose Personal sign-in, and select **Save to
+   my Drive** from Account & sync. Google requests narrowly scoped Drive app-data consent
    before saving. The next visit can restore the profile after consent again.
 
 ## Data separation and limitations
 
-- Only personal assessment evidence, targets, aspiration history and practice
-  selections are saved to Drive, by explicit user action.
+- The personal profile, current assessment draft, completed assessment history,
+  targets, aspiration history and practice selections are saved to Drive by
+  explicit user action. Each completed assessment retains its evidence and the
+  profile and targets as they were when it was saved.
 - Flourishing reflections and local role review observations stay local.
 - Drive access tokens are held only in browser memory. After a reload the
   authorization popup may be required again.
