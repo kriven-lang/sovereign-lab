@@ -6,12 +6,18 @@
   "type": "commonjs",
   "scripts": {
     "test": "node tests/smoke.cjs && node tests/portal-smoke.cjs",
-    "provision-member": "node scripts/provision-member.mjs"
+    "provision-member": "node scripts/provision-member.mjs",
+    "test:rules": "firebase emulators:exec --only firestore \"node tests/firestore-rules.cjs\""
   },
   "dependencies": {
     "firebase-admin": "^13.0.0"
   },
   "engines": {
     "node": ">=20"
+  },
+  "devDependencies": {
+    "firebase": "^13.3.0",
+    "firebase-tools": "^15.0.0",
+    "@firebase/rules-unit-testing": "^4.0.1"
   }
 }
