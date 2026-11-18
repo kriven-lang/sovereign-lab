@@ -3,7 +3,12 @@
 'use strict';
 const D=window.SOVEREIGN_DATA;
 if(!D){document.getElementById('app').textContent='Framework data could not load.';return;}
-const KEY='sovereign-lab-state-v1';
+const BASE_KEY='sovereign-lab-state-v1';
+const authConfigured=!!(window.SOVEREIGN_FIREBASE_CONFIG?.apiKey&&window.SOVEREIGN_FIREBASE_CONFIG?.projectId);
+let activeUser=null;
+const storageKey=()=>activeUser?BASE_KEY+'-user-'+activeUser.uid:BASE_KEY;
+function readLocal(k){try{return normalize(JSON.parse(localStorage.getItem(k)||'null'))}catch{return makeDefault()}}
+
 const CAP=D.capabilities, TEMPLATES=D.templates;
 const byId=id=>CAP.find(c=>c.id===id);
 const template=id=>TEMPLATES.find(t=>t.id===id)||TEMPLATES[0];
@@ -29,9 +34,11 @@ function normalize(raw){
  for(const c of CAP){const x=rv.ratings?.[c.id];if(x&&typeof x==='object')base.review.ratings[c.id]={current:asRating(x.current),evidence:String(x.evidence||'').slice(0,5000)}}
  return base;
 }
-let state;try{state=normalize(JSON.parse(localStorage.getItem(KEY)||'null'))}catch{state=makeDefault()}
+let state=authConfigured?makeDefault():readLocal(BASE_KEY)
 let axis='thought';let reviewAxis='thought';let toastTimer;
-function save(){try{localStorage.setItem(KEY,JSON.stringify(state))}catch{toast('Browser storage unavailable. Export a backup to preserve changes.')}}
+function save(){if(authConfigured&&!activeUser)return;try{localStorage.setItem(storageKey(),JSON.stringify(state))}catch{toast('Browser storage unavailable. Export a backup to preserve changes.')}}
+function personalCloudWorkspace(){const {schema,goal,goalName,pendingTemplate,targets,assessments,history,plans}=state;return {schema,goal,goalName,pendingTemplate,targets,assessments,history,plans}}
+
 function toast(msg){const t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>t.classList.remove('show'),3500)}
 function a(id){return state.assessments[id]||(state.assessments[id]={current:null,importance:3,motivation:3,evidence:''})}
 function rv(id){return state.review.ratings[id]||(state.review.ratings[id]={current:null,evidence:''})}
@@ -72,6 +79,16 @@ function aspirations(){
  header('Aspiration timeline','Historical snapshots record priorities, not a measure of human worth')+
  `<div class="card">${state.history.length?state.history.slice().reverse().map((h,i)=>`<div class="history-row"><div><strong>${e(h.name||'Unnamed aspiration')}</strong><small>${e(niceDate(h.date))} · ${Object.values(h.targets).filter(v=>v>=3).length} high-priority capabilities</small></div><button class="small-button" data-action="restore-snapshot" data-index="${state.history.length-1-i}">Restore targets</button></div>`).join(''):`<div class="quiet">No snapshots saved yet. Save your current direction, then compare future changes against it.</div>`}</div>`;
 }
+function reading(){
+ const cat=window.SOVEREIGN_BOOKS||{},ids=gaps().map(g=>g.id),results=[],seen=new Set();
+ if(!ids.length)ids.push(...CAP.filter(c=>state.targets[c.id]>=3).map(c=>c.id));
+ for(const id of ids)for(const book of cat[id]||[]){if(!seen.has(book[0])){seen.add(book[0]);results.push({book,cap:byId(id)?.name||id})}}
+ return header('Suggested reading','Curated from your own goals; suggestions are not a personality diagnosis')+
+ '<div class="grid grid-2">'+(results.length?results.slice(0,6).map(({book,cap})=>
+ '<div class="card"><div class="axis-label">'+e(cap)+'</div><h3>'+e(book[0])+'</h3><p>'+e(book[1])+'</p><p style="margin-top:12px">'+e(book[2])+'</p><a class="small-button space-top" style="display:inline-block" target="_blank" rel="noopener noreferrer" href="'+e(book[3])+'">Book details ↗</a></div>'
+ ).join(''):'<div class="quiet">Set your goals and complete assessments for personalized suggestions.</div>')+'</div>';
+}
+
 function development(){
  const gs=gaps(),unknown=CAP.filter(c=>a(c.id).current===null&&state.targets[c.id]>0);
  return pageIntro('03 / Deliberate practice','Turn gaps into <em>experiments.</em>','The goal is not to maximize every score. Prioritize the capabilities that matter to your current direction, then choose practical experiences that can create real evidence.')+
@@ -79,7 +96,8 @@ function development(){
  header('Your priority practice list','Ordered by gap × personal importance × motivation')+
  `<div class="card">${gs.length?gs.map((g,i)=>`<div class="gap-card"><div><div class="numbered">PRIORITY ${String(i+1).padStart(2,'0')} · ${e(g.axis).toUpperCase()}</div><h3>${e(g.name)}</h3><p>Current ${g.current}/4 → Target ${g.target}/4 · Importance ${g.importance}/5 · Motivation ${g.motivation}/5</p><div class="notice" style="margin:12px 0"><strong>Practice:</strong> ${e(g.practice)}</div><label class="tiny"><input type="checkbox" data-kind="plan" data-id="${g.id}" ${state.plans.includes(g.id)?'checked':''} /> Add to my active practices</label></div><span class="gap-pill">+${g.gap}</span></div>`).join(''):`<div class="quiet">No known target gaps. This is not the same as having nothing to improve: you can assess more areas or change your chosen direction.</div>`}</div>`+
  `${unknown.length?`${header('Areas needing observation','Do not count missing evidence as a development deficit')}<div class="card">${unknown.map(c=>`<div class="list-row"><div><strong>${e(c.name)}</strong><div class="meta">${e(c.axis)} · Target ${state.targets[c.id]}/4</div></div>${pill('Unassessed')}</div>`).join('')}</div>`:''}`+
- `<div class="callout"><strong>How to use this plan:</strong> Choose one or two priority practices. Define an actual situation in which you can demonstrate improvement, gather evidence, and review later. A reading list alone does not establish proficiency.</div>`;
+ `<div class="callout"><strong>How to use this plan:</strong> Choose one or two priority practices. Define an actual situation in which you can demonstrate improvement, gather evidence, and review later. A reading list alone does not establish proficiency.</div>`+
+ reading();
 }
 function reflection(){
  return pageIntro('04 / The inner dimension','Grow without losing <em>yourself.</em>','An entirely private journal for meaning, inner freedom, relationships and contentment. There are no wellbeing rankings or performance scores. These answers are never included in professional review exports.')+
@@ -96,6 +114,7 @@ function review(){
  return pageIntro('05 / Evidence-first reviews','Assess the fit. <em>Not the worth.</em>','A separate workspace for role requirements and observed work behaviours. Use it to support constructive review conversations, not to infer a person’s intrinsic value, spiritual character, or private wellbeing.')+
  `<div class="notice warning"><strong>Important:</strong> These provisional ratings are subjective and unvalidated. Never use a single score to determine hiring, promotion, pay, redeployment or separation. Look at actual outcomes, context, accommodations, multiple observers, employee response and applicable policy.</div>`+
  `<div class="grid grid-3"><div class="card"><div class="stat-label">Requirements covered</div><div class="stat-number">${cover.value===null?'—':`${cover.value}%`}</div><div class="stat-desc">Shown only after 60% of required capabilities are assessed; never a hire/fire score</div></div><div class="card"><div class="stat-label">Observed capabilities</div><div class="stat-number">${known}<span class="muted" style="font-size:18px"> / ${CAP.length}</span></div><div class="stat-desc">${cover.missing} role requirements lack observations</div></div><div class="card"><div class="stat-label">Role currently considered</div><div class="stat-number" style="font-size:19px;margin-top:15px">${e(selected.name)}</div><div class="stat-desc">Requirements are illustrative and editable in source definitions</div></div></div>`+
+ `<div class="notice warning"><strong>Morality and obedience — methodological caution:</strong> This tool must not claim to measure someone's inherent moral worth. Consider specific documented ethical workplace conduct and team ethical climate instead. “Obedience” refers only to legitimate, safe, lawful, clearly communicated, role-appropriate instructions, with space for principled disagreement, escalation and refusal of unsafe requests. Always consider context, accessibility, fairness and the person's response. These constructs are not validated for automated personnel decisions.</div>`+
  header('Review context','Stored only in this browser until you export a review')+
  `<div class="card"><div class="fields"><div class="field"><label for="review-person">Person / identifier (optional)</label><input class="input" id="review-person" maxlength="120" data-kind="reviewText" data-prop="person" value="${e(state.review.person)}" placeholder="e.g., Team member A" /></div><div class="field"><label for="review-observer">Observer (optional)</label><input class="input" id="review-observer" maxlength="120" data-kind="reviewText" data-prop="observer" value="${e(state.review.observer)}" placeholder="e.g., Reviewer" /></div><div class="field" style="grid-column:1/-1"><label for="review-role">Role comparison profile</label><select class="input" id="review-role" data-kind="reviewRole">${TEMPLATES.map(t=>`<option value="${t.id}" ${t.id===selected.id?'selected':''}>${e(t.name)}</option>`).join('')}</select></div></div></div>`+
  header('Observed behaviours','Treat “not assessed” as missing evidence, not poor ability')+axisTabs(reviewAxis,'review')+
@@ -104,21 +123,62 @@ function review(){
  `<div class="card">${alternatives.length?alternatives.slice(0,4).map(x=>`<div class="list-row"><div><strong>${e(x.t.name)}</strong><div class="meta">${x.count} assessed of ${x.total} role requirements</div></div><span class="tag">${x.value}% observed coverage</span></div>`).join(''):`<div class="quiet">Enter observed evidence to explore how the same strengths compare with different role requirements.</div>`}<div class="notice">Coverage is hidden until at least 60% of required capabilities are observed, and is calculated only on those rated. Even then, results may be distorted by missing evidence. It excludes market availability, motivation, job-specific technical skills, performance outcomes and contextual constraints.</div></div>`+
  `${header('Context and review discussion','The role or organization may also need to change')}<div class="card"><div class="field"><label for="review-notes">Context, alternative roles, support offered, employee response, next review</label><textarea class="input" id="review-notes" rows="5" data-kind="reviewText" data-prop="notes" placeholder="Record environmental constraints, training commitments, strengths, and what to discuss with the employee.">${e(state.review.notes)}</textarea></div><div class="btnrow space-top"><button class="action-btn" data-action="export-review">Export review JSON (no personal journal)</button><button class="action-btn secondary" data-action="print">Print this view</button><button class="action-btn danger" data-action="clear-review">Clear review workspace</button></div></div>`;
 }
+function account(){
+ const status=window.SOVEREIGN_CLOUD?.status||(authConfigured?'connecting':'unconfigured');
+ const signed=!!activeUser;
+ return pageIntro('07 / Account','Your workspace. <em>Your choice.</em>',
+ 'Google authentication verifies identity without giving access to Gmail messages. Private journal entries and work reviews are not synced.')+
+ '<div class="grid grid-2"><div class="card"><div class="axis-label">Google identity</div><h3>'+
+ (signed?e(activeUser.displayName||activeUser.email):'Personal account')+'</h3><p>'+
+ (signed?e(activeUser.email)+' · Signed in':'Status: '+e(status))+'</p>'+
+ '<div class="btnrow space-top">'+(!authConfigured?'<span class="tag">Local-only · Firebase setup pending</span>':signed?
+ '<button class="action-btn secondary" data-action="sign-out">Sign out</button>':
+ '<button class="action-btn" data-action="sign-in" '+(status==='connecting'?'disabled':'')+'>Sign in with Google</button>')+
+ '</div><p class="footnote space-top">Google identity does not grant a role in any organization.</p></div>'+
+ '<div class="card"><div class="axis-label">Private cloud backup</div><h3>Save personal progress across devices</h3>'+
+ '<p>Only capabilities, evidence, aspiration targets and practice plans. Excludes private flourishing notes and all workplace review records.</p>'+
+ '<div class="btnrow space-top"><button class="action-btn" data-action="cloud-save" '+(!signed?'disabled':'')+'>Save personal profile</button>'+
+ '<button class="action-btn secondary" data-action="cloud-load" '+(!signed?'disabled':'')+'>Load cloud profile</button></div>'+
+ '<p class="footnote space-top">Cloud uploads happen only when you explicitly choose to save.</p></div></div>'+
+ '<div class="callout"><strong>Organization modules not yet active.</strong> Employee/manager workflows, HR records, recruitment, dashboards and AI need secure server-side access and audit controls before real data can be used.</div>';
+}
+
 function data(){
- return pageIntro('06 / Ownership & privacy','Your data stays <em>yours.</em>','Everything runs in your browser. No accounts, analytics, network requests or cloud database. Source code can live on a public GitHub repository without publishing the information you enter.')+
+ return pageIntro('06 / Ownership & privacy','Your data stays <em>yours.</em>','Your free workspace is local-first. Optional Google sign-in and personal cloud backup become available when Firebase is configured. Private reflections and workplace review notes remain local.')+
  `<div class="grid grid-2"><div class="card"><div class="axis-label">Personal backup</div><h3>Export your workspace</h3><p>Download all assessments, aspirations, history, journal and local review observations as JSON. Keep this file somewhere private.</p><div class="btnrow space-top"><button class="action-btn" data-action="export-personal">Download complete backup</button></div></div><div class="card"><div class="axis-label">Professional separation</div><h3>Export only the review</h3><p>Produces a role-review file containing observations and the selected role. It excludes aspirations, personal self-ratings and all flourishing reflections.</p><div class="btnrow space-top"><button class="action-btn secondary" data-action="export-review">Download review-only JSON</button></div></div><div class="card"><div class="axis-label">Restore</div><h3>Import a backup</h3><p>Restores a previously exported personal workspace and replaces all data saved in this browser. Export your current workspace first if you want to keep it.</p><div class="btnrow space-top"><label class="action-btn secondary" for="importFile" style="cursor:pointer">Choose backup file</label><input id="importFile" type="file" accept="application/json,.json" style="position:absolute;width:1px;height:1px;opacity:0" /></div></div><div class="card"><div class="axis-label">Reset</div><h3>Remove locally stored entries</h3><p>Deletes the app's saved data from this browser only. Previously downloaded backups are unaffected.</p><div class="btnrow space-top"><button class="action-btn danger" data-action="reset">Clear local workspace</button></div></div></div>`+
  `<div class="callout"><strong>Confidentiality notes:</strong> Browser storage is not encrypted and can be accessed by others using the same browser profile. Avoid entering identifiable employee performance details on shared devices. A public GitHub Pages website publishes the app's code, not browser-stored records; do not commit personal JSON backups to GitHub.</div>`+
  header('Framework boundaries','How to interpret this prototype')+
  `<div class="card"><ul class="bullet"><li>Capability names and example targets are designed for exploration. They have not been psychometrically validated.</li><li>Separate demonstrated proficiency from missing evidence, opportunities, motivation and personal goals.</li><li>Workplace character is evaluated only through observable professional conduct — not religion, spirituality or private values.</li><li>Managers should document real examples, share criteria, invite employee response and investigate role design or resource constraints.</li><li>Never use the tool as an automated employee-ranking or employment-decision engine.</li><li>Flourishing reflections remain outside professional review and are not scored.</li></ul></div>`;
 }
-const PAGES={overview:['PERSONAL STUDIO','Overview'],assessment:['PERSONAL STUDIO','Capability assessment'],aspirations:['PERSONAL STUDIO','Aspirations & targets'],development:['PERSONAL STUDIO','Development plan'],reflection:['PERSONAL STUDIO','Flourishing journal'],review:['PROFESSIONAL TOOLS','Role review'],data:['WORKSPACE','Data & privacy']};
-const renderers={overview,assessment,aspirations,development,reflection,review,data};
+const PAGES={account:['WORKSPACE','Account & sync'],overview:['PERSONAL STUDIO','Overview'],assessment:['PERSONAL STUDIO','Capability assessment'],aspirations:['PERSONAL STUDIO','Aspirations & targets'],development:['PERSONAL STUDIO','Development plan'],reflection:['PERSONAL STUDIO','Flourishing journal'],review:['PROFESSIONAL TOOLS','Role review'],data:['WORKSPACE','Data & privacy']};
+const renderers={overview,assessment,aspirations,development,reflection,review,data,account};
 function currentPage(){const k=location.hash.slice(1);return PAGES[k]?k:'overview'}
-function render(){const p=currentPage();document.getElementById('app').innerHTML=renderers[p]();document.getElementById('location').innerHTML=`${e(PAGES[p][0])} <span>/</span> ${e(PAGES[p][1])}`;document.querySelectorAll('[data-page]').forEach(a=>{const on=a.dataset.page===p;a.classList.toggle('active',on);on?a.setAttribute('aria-current','page'):a.removeAttribute('aria-current')})}
+function render(){
+ const p=authConfigured&&!activeUser?'account':currentPage();
+ document.getElementById('app').innerHTML=renderers[p]();
+ document.getElementById('location').innerHTML=`${e(PAGES[p][0])} <span>/</span> ${e(PAGES[p][1])}`;
+ const x=document.getElementById('account-status');
+ if(x)x.textContent=activeUser?'Signed in · '+(activeUser.displayName||activeUser.email):authConfigured?'Google sign-in required':'Local first · Firebase not configured';
+ document.querySelectorAll('[data-page]').forEach(a=>{const on=a.dataset.page===p;a.classList.toggle('active',on);on?a.setAttribute('aria-current','page'):a.removeAttribute('aria-current')});
+}
 function exportJson(name,data){const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'}),url=URL.createObjectURL(blob),link=document.createElement('a');link.href=url;link.download=name;document.body.appendChild(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),1500);toast('JSON file prepared for download.')}
 function exportReview(){const t=template(state.review.role);const record={format:'sovereign-lab-role-review',version:1,exportedAt:new Date().toISOString(),person:state.review.person,observer:state.review.observer,role:t.name,roleId:t.id,roleTargets:t.targets,observations:CAP.map(c=>({id:c.id,axis:c.axis,capability:c.name,observed:rv(c.id).current,evidence:rv(c.id).evidence})),discussionNotes:state.review.notes,disclaimer:'Illustrative development aid only. Not a validated assessment or automated employment decision.'};exportJson('sovereign-role-review.json',record)}
 function clicked(ev){const b=ev.target.closest('[data-action]');if(!b)return;const action=b.dataset.action;
- if(action==='go'){location.hash=b.dataset.to;document.getElementById('app').focus();window.scrollTo(0,0)}
+ if(action==='sign-in')window.SOVEREIGN_CLOUD?.signIn().catch(err=>toast('Sign-in failed: '+err.message));
+ else if(action==='sign-out')window.SOVEREIGN_CLOUD?.signOut().catch(err=>toast('Sign-out failed: '+err.message));
+ else if(action==='cloud-save'){
+  if(!confirm('Save your private capability assessments, evidence and goals to the cloud? Your reflections and role-review notes are excluded.'))return;
+  window.SOVEREIGN_CLOUD?.savePersonal(personalCloudWorkspace()).then(()=>toast('Personal profile saved.')).catch(err=>toast('Cloud save failed: '+err.message));
+ }
+ else if(action==='cloud-load'){
+  window.SOVEREIGN_CLOUD?.loadPersonal().then(remote=>{
+   if(!remote){toast('No cloud profile has been saved yet.');return;}
+   if(!confirm('Replace local capabilities and goals with this cloud backup? Local reflections and reviews are preserved.'))return;
+   state=normalize({...state,...remote,reflections:state.reflections,review:state.review});
+   save();render();toast('Personal profile restored.');
+  }).catch(err=>toast('Cloud restore failed: '+err.message));
+ }
+ else if(action==='go'){location.hash=b.dataset.to;document.getElementById('app').focus();window.scrollTo(0,0)}
  else if(action==='axis'){if(b.dataset.field==='assessment')axis=b.dataset.axis;else reviewAxis=b.dataset.axis;render()}
  else if(action==='apply-template'){const t=template(state.pendingTemplate);state.targets={...t.targets};state.goal=t.id;state.goalName=t.name;save();render();toast('Aspiration targets updated. Your assessments remain unchanged.')}
  else if(action==='save-snapshot'){state.history.push({date:new Date().toISOString(),name:state.goalName||'Custom direction',goal:state.goal,targets:{...state.targets}});state.history=state.history.slice(-100);save();render();toast('Aspiration snapshot saved.')}
@@ -145,6 +205,12 @@ document.addEventListener('click',clicked);
 document.addEventListener('change',changed);
 document.addEventListener('input',ev=>{const k=ev.target.dataset.kind;if(['assessment','goalName','reflection','reviewEvidence','reviewText'].includes(k)&&['TEXTAREA','INPUT'].includes(ev.target.tagName))changed(ev)});
 document.addEventListener('change',async ev=>{if(ev.target.id!=='importFile')return;const file=ev.target.files?.[0];if(!file)return;try{const raw=JSON.parse(await file.text());if(raw.format!=='sovereign-lab-backup'||raw.state?.schema!==1)throw Error('Not a supported personal backup file.');if(!confirm('Replace the entire locally saved workspace with this backup?'))return;state=normalize(raw.state);save();render();toast('Backup restored.')}catch(err){toast('Import failed: '+err.message)}finally{ev.target.value=''}});
+window.addEventListener('sovereign-auth-change',ev=>{
+ const next=ev.detail?.user||null,prior=activeUser?.uid||null;
+ activeUser=next;
+ if(authConfigured&&(next?.uid||null)!==prior)state=next?readLocal(storageKey()):makeDefault();
+ render();
+});
 window.addEventListener('hashchange',()=>{render();window.scrollTo({top:0,behavior:'auto'})});
 render();
 })();

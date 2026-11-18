@@ -7,5 +7,5 @@ const window={SOVEREIGN_DATA:null,addEventListener:(n,f)=>(wh[n]??=[]).push(f),s
 const ctx={document,window,localStorage:{getItem:k=>storage[k]||null,setItem:(k,v)=>storage[k]=v},location:{hash:''},confirm:()=>true,setTimeout:()=>0,clearTimeout(){},Blob:class{constructor(parts){this.parts=parts}},URL:{createObjectURL:()=>'',revokeObjectURL(){}},console};
 vm.createContext(ctx);for(const f of ['data.js','app.js'])vm.runInContext(fs.readFileSync(path.join(root,f),'utf8'),ctx);
 assert.match(node('app').innerHTML,/Know your strengths/);
-for(const p of ['assessment','aspirations','development','reflection','review','data']){ctx.location.hash='#'+p;for(const f of wh.hashchange||[])f();assert.ok(node('app').innerHTML.length>1000,'Empty page '+p)}
+for(const p of ['assessment','aspirations','development','reflection','review','data','account']){ctx.location.hash='#'+p;for(const f of wh.hashchange||[])f();assert.ok(node('app').innerHTML.length>1000,'Empty page '+p)}
 console.log('Sovereign Lab smoke checks passed');

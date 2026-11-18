@@ -22,18 +22,22 @@
         <div class="side-heading inside">PROFESSIONAL TOOLS</div>
         <a href="#review" data-page="review"><span class="nav-ico">⊞</span>Role review workspace</a>
         <div class="side-heading inside">WORKSPACE</div>
+<a href="#account" data-page="account"><span class="nav-ico">◉</span>Account & sync</a>
         <a href="#data" data-page="data"><span class="nav-ico">⇩</span>Data & privacy</a>
       </nav>
-      <div class="sidebar-bottom"><span class="status-dot"></span> Local-first · No account needed <small>Your entries stay in this browser unless you export them.</small></div>
+      <div class="sidebar-bottom"><span class="status-dot"></span> <span id="account-status">Local first · Optional Google login</span><small>Private reflections and role notes stay local.</small></div>
     </aside>
     <div class="workspace">
       <header class="topbar"><div class="topbar-location" id="location">PERSONAL STUDIO <span>/</span> Overview</div><div class="topbar-actions"><span class="private-pill">◉ PRIVATE BY DESIGN</span><button class="small-button" data-action="export-personal">Export backup ↗</button></div></header>
       <main id="app" tabindex="-1"></main>
-      <footer class="footer">Sovereign Lab <span>•</span> A reflective development aid, not a psychometric instrument or an automated employment decision system. <span>v0.1</span></footer>
+      <footer class="footer">Sovereign Lab <span>•</span> A reflective development aid, not a psychometric instrument or an automated employment decision system. <span>v0.2</span></footer>
     </div>
   </div>
   <div class="toast" role="status" aria-live="polite" id="toast"></div>
-  <script src="data.js"></script>
+  <script src="firebase-config.js"></script>
+<script src="data.js"></script>
+<script src="books.js"></script>
   <script src="app.js"></script>
+<script type="module" src="cloud.js"></script>
 </body>
 </html>

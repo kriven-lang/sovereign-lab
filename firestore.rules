@@ -1,0 +1,22 @@
+rules_version = '2';
+service cloud.firestore {
+ match /databases/{database}/documents {
+  function owner(uid) {return request.auth != null && request.auth.uid == uid;}
+  function personalPayload() {
+   return request.resource.data.keys().hasOnly(['format','schema','workspace','updatedAt'])
+    && request.resource.data.keys().hasAll(['format','schema','workspace','updatedAt'])
+    && request.resource.data.format == 'sovereign-lab-personal'
+    && request.resource.data.schema == 1
+    && request.resource.data.workspace is map
+    && request.resource.data.workspace.schema == 1
+    && request.resource.data.workspace.keys().hasOnly(['schema','goal','goalName','pendingTemplate','targets','assessments','history','plans'])
+    && request.resource.data.updatedAt == request.time;
+  }
+  match /users/{uid}/private/{docId} {
+   allow read: if owner(uid) && docId == 'profile';
+   allow create, update: if owner(uid) && docId == 'profile' && personalPayload();
+   allow delete: if owner(uid) && docId == 'profile';
+  }
+  match /{document=**} {allow read, write: if false;}
+ }
+}

@@ -1,7 +1,7 @@
 /* Sovereign Lab — versioned, editable framework definitions.
    This taxonomy is a conceptual development aid, not a validated psychometric test. */
 window.SOVEREIGN_DATA = {
-  version: '0.1.0',
+  version: '0.2.0',
   axes: [
     {id:'thought', name:'Thought', subtitle:'How you understand, question and create', icon:'◇'},
     {id:'action', name:'Action', subtitle:'How you turn intentions into outcomes', icon:'↗'},

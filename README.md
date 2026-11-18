@@ -61,3 +61,6 @@ The GitHub repository `kriven-lang/sovereign-lab` is intentionally **private**. 
 ## Quick sanity check
 
 With Node.js installed, run `node tests/smoke.cjs` to validate the main screen renders, evidence saves, aspiration history, review export isolation and basic input escaping.
+## v0.2 — Authentication foundation
+
+The site stays hosted by GitHub Pages. Google login and manual cloud backups require Firebase one-time setup; see `docs/GOOGLE_SIGN_IN.md`. Only personal assessment and aspiration data is eligible for backup. Journals and workplace reviews remain local. Organization dashboards, HR data, recruitment workflows and AI coaching are planned but **not implemented**. See `docs/ORG_ARCHITECTURE.md` for roles, assessment workflows, and the carefully bounded morality and instruction-adherence metrics.
