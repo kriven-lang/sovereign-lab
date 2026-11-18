@@ -179,7 +179,7 @@ function hrPanel(){
  '<button class="action-btn space-top" data-org="create">Assign review</button></div>';
 }
 function ratingOptions(value){
- return '<option value="">Not assessed</option>'+[0,1,2,3,4].map(i=>'<option value="'+i+'" '+(Number(value)===i&&value!==''?'selected':'')+'>'+i+'</option>').join('');
+ return '<option value="">Not assessed</option>'+[0,1,2,3,4].map(i=>'<option value="'+i+'" '+(value!==null&&value!==undefined&&value!==''&&Number(value)===i?'selected':'')+'>'+i+'</option>').join('');
 }
 function comparePanel(){
  if(!state.own?.submitted||!state.other?.submitted)return notice('Independent submissions are still embargoed. Comparison unlocks after both assigned participants have submitted.');
