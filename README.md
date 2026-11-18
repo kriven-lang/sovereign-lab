@@ -1,74 +1,97 @@
 # Sovereign Lab
 
-**A local-first capability, aspiration, and development workspace.**
+**A capability, aspiration and development platform with distinct personal and organizational workspaces.**
 
-Sovereign Lab is a prototype of a dynamic human capability and alignment framework. It separates **thought**, **action**, and **integrity** into independently assessed capabilities, then compares evidence-based proficiency with an aspiration's adjustable target profile. It also offers private flourishing reflections and a completely separate professional role-review workspace.
+Version: **0.3 pilot** · Website hosted through GitHub Pages · Source repository public.
+The framework is a developmental aid, **not** a validated psychometric test or an
+automated employment, hiring, compensation or separation decision engine.
 
-## Run
+## Public landing page
 
-Open `index.html` in any modern browser. No server, login, build process or third-party dependencies are required. You can also serve it as a static site (for example, through GitHub Pages from the repository root).
+Start at `#welcome` to read about the product and select:
+- **Personal**: Google sign-in; private capabilities, aspirations, development plan,
+  reading suggestions, and optional reflection. Personal progress can be
+  manually stored in the person's **own hidden Google Drive app-data area**.
+- **Organization**: a verified organizational Google account plus **explicit
+  membership provisioning** is required. Separate employee/manager drafts,
+  submission lock, simultaneous disclosure, documented discussion and HR
+  finalization are implemented as a pilot.
 
-## What works in v0.1
+A local-only personal preview remains available before Google setup.
 
-- 16 capabilities in three axes, each with descriptions, evidence examples and deliberate-practice prompts.
-- Proficiency scale `0–4` **plus a separate “not assessed” state**; no universal person score.
-- Independent ratings for demonstrated proficiency, personal importance and motivation.
-- Five illustrative aspiration templates, editable individual targets and dated aspiration snapshots.
-- Evidence-first gap analysis and prioritized personal practice suggestions.
-- Private, unscored journal for inner freedom, meaning, relationships and contentment.
-- Separate professional review profile with role requirements, observed evidence, provisional coverage and alternative-role *hypotheses*.
-- Browser-local persistence, JSON backup/import, review-only JSON export, and reset.
-- Responsive desktop/mobile design; printable professional review page.
+## What works in the source
 
-## Important boundaries
+- Thought, Action and Integrity: 16 individually assessed capabilities.
+- Personal goals, target proficiencies, gaps and developmental practices.
+- Suggested books keyed to selected goals, not opaque personality inference.
+- Private flourishing journal remains on the current browser.
+- Google OAuth identity, with separate personal and organization entry paths.
+- Personal Google Drive appDataFolder save/restore with scoped user permission.
+- Organization-only Firestore review workflow with role-scoped security rules.
+- HR review creation, separately held employee/manager drafts, paired comparison,
+  immutable submitted records and attributed reconciliation discussion.
+- Organization member-provisioning script and Firebase security tests.
 
-This is an **unvalidated development aid**, not a psychometric test or human ranking system. The sample target templates are hypotheses, not established job competency standards. Missing observation is not equivalent to an inability. Real performance is affected by role design, opportunities, systems, management, support and resources. Never automatically determine hiring, firing, compensation, promotions or employee placement from these prototype indicators. Require multiple sources of evidence, transparent criteria, employee participation and applicable local employment policy.
+### Deployment status
 
-The integrity dimension concerns **observable professional conduct** when used in workplace reviews. Private spirituality, religion, politics, personal fulfilment or character judgments should not enter employment evaluation. The flourishing journal is excluded from the review-only export.
+**The code is committed, but the Google/Firebase service is not configured.**
+`firebase-config.js` intentionally contains `null`. Real Google sign-in,
+Google Drive backup, and multi-user organizational reviews will not work until
+the product owner completes the external setup and deployment of security rules.
 
-## Privacy and security
+The review pilot has not been tested against a live Firebase project or
+Emulator Suite in this environment. **Do not upload real employee data** before
+all access-control tests pass and operational privacy controls are implemented.
 
-- The app makes **no network calls** and contains no trackers or analytics.
-- Information is saved in the browser's `localStorage`, which is **not encrypted**. Avoid shared computers for identifiable workplace data.
-- The GitHub repository is private. However, if the website is made public, visitors can inspect HTML, CSS and JavaScript downloaded into their browser. Never commit personal backups, journals or employee-review JSON files to any repository.
-- Export JSON files are unencrypted; store and transmit them responsibly.
-- This prototype is single-user and does not have access controls, server-side storage, consent management or audit logs. It is **not enterprise-ready** for sensitive personnel workflows.
+## One-time setup
 
-## Repository structure
+1. [Personal sign-in and Drive setup](docs/GOOGLE_SIGN_IN.md)
+2. [Organization review activation](docs/ORG_SETUP.md)
+3. [Organizational architecture and metric boundaries](docs/ORG_ARCHITECTURE.md)
 
-- `index.html` — accessible semantic interface and page shell.
-- `styles.css` — responsive visual system.
-- `data.js` — capability dictionary, proficiency anchors, aspiration templates, practice prompts.
-- `app.js` — local application logic, review workspace and exports.
+Google sign-in alone does not grant organization membership. HR/admin grants are
+stored on a trusted backend. An organizational work account must be verified
+separately from the personal workspace. The current pilot checks non-Gmail
+addresses and provisioned membership; Google Workspace tenancy should be
+validated server-side before production deployment.
 
-## Ways to extend
+## Access and privacy
 
-1. Validate the capability definitions and behavioral anchors with subject-matter experts; test inter-rater consistency.
-2. Add context-specific technical competencies and role calibration sessions.
-3. Introduce evidence quality and observation opportunity tracking instead of one-number ratings.
-4. Support explicit opt-in sharing, role-based access, encryption and audit logging before organizational pilots.
-5. Model development-plan commitments, follow-up checkpoints and progress without assuming that all aspirations must rise.
+- Personal Drive storage uses only `drive.appdata`, not full Google Drive access.
+- No Gmail inbox scopes are requested.
+- Self-reflections and the personal journal are not accessible to managers or HR.
+- Personal Drive files are never read as organization assessments.
+- Firestore has explicit role and membership checks for organizational records.
+- Submitted assessments are locked and counterpart access is embargoed until
+  both participants submit.
+- No salary, recruitment or AI chatbot backend is active yet.
+- Morality and obedience should be reported only as carefully defined, contested,
+  contextual workplace indicators, never objective personal worth or blind loyalty.
 
-## License
+## Local and automated checks
 
-Proprietary; all rights reserved. No open-source license is granted for reuse or redistribution.
+Open `index.html` in a browser for the local-only demo.
 
-## Hosting a public website from private source
+To run basic code smoke tests:
 
-The GitHub repository `kriven-lang/sovereign-lab` is intentionally **private**. A public site can be hosted using Cloudflare Pages with private GitHub integration. GitHub Pages is another option if the GitHub plan supports Pages from private repositories. Neither hosting option hides client-side code sent to visitors. Do not publish personal assessment datasets, employee reviews, API secrets or private keys.
+```bash
+npm install
+npm test
+```
 
-**Deployment status:** Source committed to GitHub; public hosting is a separate configuration step.
-## Quick sanity check
+To run Firestore authorization tests, install Java and Firebase CLI dependencies
+and use the Firebase Emulator Suite (see `firebase.json`):
 
-With Node.js installed, run `node tests/smoke.cjs` to validate the main screen renders, evidence saves, aspiration history, review export isolation and basic input escaping.
-## v0.2 — Authentication foundation
+```bash
+npm run test:rules
+```
 
-The site stays hosted by GitHub Pages. Google login and manual cloud backups require Firebase one-time setup; see `docs/GOOGLE_SIGN_IN.md`. Only personal assessment and aspiration data is eligible for backup. Journals and workplace reviews remain local. Organization dashboards, HR data, recruitment workflows and AI coaching are planned but **not implemented**. See `docs/ORG_ARCHITECTURE.md` for roles, assessment workflows, and the carefully bounded morality and instruction-adherence metrics.
+For privileged membership provisioning, **never** commit private credentials.
+See `scripts/provision-member.mjs` and `docs/ORG_SETUP.md`.
 
-## Personal Google Drive
+## Source and licensing
 
-As of v0.3, personal cloud saves and restores use the signed-in user's Google Drive hidden `appDataFolder` with a narrowly scoped OAuth grant. Firestore is reserved for the organizational review records. See `docs/GOOGLE_SIGN_IN.md`. These integrations require Firebase/Google Cloud configuration before they will function on the hosted site.
-
-## v0.3 — Independent organization reviews
-
-The organizational review UI includes independent employee/manager drafts, submission locks, comparison after both submissions, attributed reconciliation and HR finalization. The server-enforced access model is in `firestore.rules`. **This is source code for a pilot, not yet an activated organizational service.** Before using any real employee data, follow `docs/ORG_SETUP.md` and validate the Firestore security rules with an emulator. Personal Drive data is not part of organizational review access.
+The repository is publicly readable so it can be deployed via GitHub Pages.
+Only authorized collaborators can push commits. No open-source license is
+granted for reuse or redistribution by default; client-side code remains
+inspectable by anyone visiting the website.
