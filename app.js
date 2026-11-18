@@ -36,7 +36,7 @@ function normalize(raw){
 }
 let state=authConfigured?makeDefault():readLocal(BASE_KEY)
 let axis='thought';let reviewAxis='thought';let toastTimer;
-function save(){if(authConfigured&&!activeUser)return;try{localStorage.setItem(storageKey(),JSON.stringify(state))}catch{toast('Browser storage unavailable. Export a backup to preserve changes.')}}
+function save(){if(authConfigured&&!activeUser&&!window.SOVEREIGN_GUEST)return;try{localStorage.setItem(storageKey(),JSON.stringify(state))}catch{toast('Browser storage unavailable. Export a backup to preserve changes.')}}
 function personalCloudWorkspace(){const {schema,goal,goalName,pendingTemplate,targets,assessments,history,plans}=state;return {schema,goal,goalName,pendingTemplate,targets,assessments,history,plans}}
 
 function toast(msg){const t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>t.classList.remove('show'),3500)}
@@ -154,7 +154,7 @@ const PAGES={account:['WORKSPACE','Account & sync'],overview:['PERSONAL STUDIO',
 const renderers={overview,assessment,aspirations,development,reflection,review,data,account};
 function currentPage(){const k=location.hash.slice(1);return PAGES[k]?k:'overview'}
 function render(){
- const p=authConfigured&&!activeUser?'account':currentPage();
+ const p=authConfigured&&!activeUser&&!window.SOVEREIGN_GUEST?'account':currentPage();
  document.getElementById('app').innerHTML=renderers[p]();
  document.getElementById('location').innerHTML=`${e(PAGES[p][0])} <span>/</span> ${e(PAGES[p][1])}`;
  const x=document.getElementById('account-status');
