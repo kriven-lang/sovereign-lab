@@ -9,20 +9,24 @@ let activeUser=null;
 const storageKey=()=>activeUser?BASE_KEY+'-user-'+activeUser.uid:BASE_KEY;
 function readLocal(k){try{return normalize(JSON.parse(localStorage.getItem(k)||'null'))}catch{return makeDefault()}}
 
-const CAP=D.capabilities, TEMPLATES=D.templates;
+const CAP=D.capabilities, AXES=D.axes, TEMPLATES=D.templates;
 const byId=id=>CAP.find(c=>c.id===id);
 const template=id=>TEMPLATES.find(t=>t.id===id)||TEMPLATES[0];
 const e=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const clamp=(v,min,max)=>Math.max(min,Math.min(max,Number(v)||0));
 const asRating=v=>v===null||v===undefined||v===''?null:(Number.isInteger(Number(v))&&Number(v)>=0&&Number(v)<=4?Number(v):null);
 const niceDate=iso=>{try{return new Date(iso).toLocaleDateString(undefined,{year:'numeric',month:'short',day:'numeric'})}catch{return 'Unknown date'}};
-function makeDefault(){return {schema:1,goal:'founder',goalName:'Entrepreneurial builder',targets:{...template('founder').targets},pendingTemplate:'founder',assessments:{},assessmentStep:null,history:[],plans:[],reflections:{},review:{person:'',observer:'',role:'dependable',ratings:{},notes:''}}}
+function makeDefault(){return {schema:1,goal:'founder',goalName:'Entrepreneurial builder',targets:{...template('founder').targets},pendingTemplate:'founder',assessments:{},assessmentAxis:null,history:[],plans:[],reflections:{},review:{person:'',observer:'',role:'dependable',ratings:{},notes:''}}}
 function normalize(raw){
  const base=makeDefault();if(!raw||typeof raw!=='object'||raw.schema!==1)return base;
  base.goal=typeof raw.goal==='string'?raw.goal:base.goal;
  base.goalName=typeof raw.goalName==='string'?raw.goalName.slice(0,120):base.goalName;
  base.pendingTemplate=template(raw.pendingTemplate).id;
- if(Number.isInteger(raw.assessmentStep)&&raw.assessmentStep>=0&&raw.assessmentStep<=CAP.length)base.assessmentStep=raw.assessmentStep;
+ if(Number.isInteger(raw.assessmentAxis)&&raw.assessmentAxis>=0&&raw.assessmentAxis<=AXES.length){
+  base.assessmentAxis=raw.assessmentAxis;
+ }else if(Number.isInteger(raw.assessmentStep)&&raw.assessmentStep>=0&&raw.assessmentStep<=CAP.length){
+  base.assessmentAxis=raw.assessmentStep===CAP.length?AXES.length:AXES.findIndex(axis=>axis.id===CAP[raw.assessmentStep].axis);
+ }
  for(const c of CAP){
   base.targets[c.id]=asRating(raw.targets?.[c.id])??base.targets[c.id];
   const a=raw.assessments?.[c.id];
@@ -38,7 +42,7 @@ function normalize(raw){
 let state=authConfigured?makeDefault():readLocal(BASE_KEY)
 let reviewAxis='thought';let toastTimer;
 function save(){if(authConfigured&&!activeUser&&!window.SOVEREIGN_GUEST)return;try{localStorage.setItem(storageKey(),JSON.stringify(state))}catch{toast('Browser storage unavailable. Export a backup to preserve changes.')}}
-function personalCloudWorkspace(){const {schema,goal,goalName,pendingTemplate,targets,assessments,assessmentStep,history,plans}=state;return {schema,goal,goalName,pendingTemplate,targets,assessments,assessmentStep,history,plans}}
+function personalCloudWorkspace(){const {schema,goal,goalName,pendingTemplate,targets,assessments,assessmentAxis,history,plans}=state;return {schema,goal,goalName,pendingTemplate,targets,assessments,assessmentAxis,history,plans}}
 
 function toast(msg){const t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>t.classList.remove('show'),3500)}
 function a(id){return state.assessments[id]||(state.assessments[id]={current:null,importance:3,motivation:3,evidence:''})}
@@ -70,43 +74,48 @@ function overview(){
  <div>${header('Demonstrated strengths','Shown only when assessed')}<div class="card">${strengths.length?strengths.slice(0,6).map(c=>`<div class="list-row"><div><strong>${e(c.name)}</strong><div class="meta">${e(c.axis)}</div></div>${pill(visibleRating(a(c.id).current),'green')}</div>`).join(''):`<div class="quiet">No high proficiency ratings recorded yet. “Not assessed” is not a weakness.</div>`}<div class="notice">Record concrete evidence before using these self-ratings for decisions. Role reviews use separate observations.</div></div></div></div>`+
  `<div class="callout"><strong>Two kinds of sovereignty.</strong> Intellectual sovereignty develops independent thought and effective action. Existential sovereignty helps you decide which ambitions matter while maintaining inner freedom. The tool supports both without treating either as a competition.</div>`;
 }
-function assessmentStep(){
- if(state.assessmentStep!==null)return state.assessmentStep;
- const firstUnassessed=CAP.findIndex(c=>state.assessments[c.id]?.current==null);
- return firstUnassessed<0?CAP.length:firstUnassessed;
+function assessmentAxis(){
+ if(state.assessmentAxis!==null)return state.assessmentAxis;
+ const firstUnassessed=CAP.find(c=>state.assessments[c.id]?.current==null);
+ return firstUnassessed?AXES.findIndex(axis=>axis.id===firstUnassessed.axis):AXES.length;
 }
-function assessment(){
- const step=assessmentStep(),c=CAP[step];
- const intro=pageIntro('Capability assessment','Assess what you can <em>demonstrate.</em>','Choose a level based on what you have observed, or leave the capability unassessed if you lack evidence. Your progress is saved as you go.');
- if(!c)return intro+
-  `<section class="card assessment-panel" aria-labelledby="assessment-step-heading">
-   <h2 id="assessment-step-heading" tabindex="-1">Review your assessment</h2>
-   <p>${coverage()} of ${CAP.length} capabilities assessed. You can revisit your answers before opening your development plan.</p>
-   <ul class="assessment-summary">${CAP.map(cap=>`<li><strong>${e(cap.name)}</strong><span>${e(R.label(cap.id,state.assessments[cap.id]?.current??null))}</span></li>`).join('')}</ul>
-   <div class="btnrow assessment-actions"><button class="action-btn secondary" data-action="assessment-back">Back</button><button class="action-btn secondary" data-action="assessment-revisit">Review from the beginning</button><button class="action-btn" data-action="go" data-to="development">Open development plan</button></div>
-  </section>`;
- const ac=a(c.id),ax=D.axes.find(item=>item.id===c.axis),rated=ac.current!==null;
- return intro+
-  `<section class="card assessment-panel" aria-labelledby="assessment-step-heading">
-   <div class="assessment-progress"><span>${e(ax.name)}</span><span>Capability ${step+1} of ${CAP.length}</span></div>
-   <progress class="assessment-progress-bar" max="${CAP.length}" value="${step+1}" aria-label="Assessment progress"></progress>
-   <div class="assessment-heading"><h2 id="assessment-step-heading" tabindex="-1">${e(c.name)}</h2>${R.help(c.id,'personal')}</div>
-   <p>${e(c.desc)}</p>
+function assessmentCapability(c){
+ const ac=a(c.id);
+ return `<article class="cap-card" aria-labelledby="assessment-cap-${c.id}">
+   <div class="assessment-heading"><h3 id="assessment-cap-${c.id}">${e(c.name)}</h3>${R.help(c.id,'personal')}</div>
+   <p class="hint">${e(c.desc)}</p>
    <div class="field assessment-rating"><label for="curr-${c.id}">Current proficiency</label><select class="input" id="curr-${c.id}" data-kind="assessment" data-id="${c.id}" data-prop="current">${R.options(c.id,ac.current)}</select><span class="hint">Aspiration target · ${visibleTarget(state.targets[c.id])}</span></div>
    <div class="field"><label for="ev-${c.id}">Evidence or example (optional)</label><textarea class="input" id="ev-${c.id}" data-kind="assessment" data-id="${c.id}" data-prop="evidence" maxlength="5000" placeholder="${e(c.evidence)}">${e(ac.evidence)}</textarea></div>
    <div class="fields">
     <div class="field"><label for="imp-${c.id}">Importance for your current goals</label><select class="input" id="imp-${c.id}" data-kind="assessment" data-id="${c.id}" data-prop="importance">${preferenceOptions(ac.importance,importanceLabels)}</select></div>
     <div class="field"><label for="mot-${c.id}">Motivation to improve</label><select class="input" id="mot-${c.id}" data-kind="assessment" data-id="${c.id}" data-prop="motivation">${preferenceOptions(ac.motivation,motivationLabels)}</select></div>
    </div>
+  </article>`;
+}
+function assessment(){
+ const step=assessmentAxis(),axis=AXES[step],next=AXES[step+1];
+ const intro=pageIntro('Capability assessment','Assess what you can <em>demonstrate.</em>','Work through one axis at a time. Choose levels based on what you have observed and leave other capabilities unassessed. Your progress is saved as you go.');
+ if(!axis)return intro+
+  `<section class="card assessment-panel" aria-labelledby="assessment-step-heading">
+   <h2 id="assessment-step-heading" tabindex="-1">Review your assessment</h2>
+   <p>${coverage()} of ${CAP.length} capabilities assessed. You can revisit your answers before opening your development plan.</p>
+   <ul class="assessment-summary">${CAP.map(cap=>`<li><strong>${e(cap.name)}</strong><span>${e(R.label(cap.id,state.assessments[cap.id]?.current??null))}</span></li>`).join('')}</ul>
+   <div class="btnrow assessment-actions"><button class="action-btn secondary" data-action="assessment-back">Back to ${e(AXES[AXES.length-1].name)}</button><button class="action-btn secondary" data-action="assessment-revisit">Review from the beginning</button><button class="action-btn" data-action="go" data-to="development">Open development plan</button></div>
+  </section>`;
+ return intro+
+  `<section class="assessment-axis" aria-labelledby="assessment-step-heading">
+   <div class="assessment-progress"><span>Axis ${step+1} of ${AXES.length}</span></div>
+   <progress class="assessment-progress-bar" max="${AXES.length}" value="${step+1}" aria-label="Assessment progress"></progress>
+   <div class="section-head"><div><h2 id="assessment-step-heading" tabindex="-1">${e(axis.name)}</h2><p>${e(axis.subtitle)}</p></div></div>
+   <div class="cap-list">${CAP.filter(c=>c.axis===axis.id).map(assessmentCapability).join('')}</div>
    <div class="btnrow assessment-actions">
-    ${step>0?'<button class="action-btn secondary" data-action="assessment-back">Back</button>':''}
-    <button class="action-btn secondary" id="assessment-skip" data-action="assessment-skip"${rated?' hidden':''}>Leave unassessed</button>
-    <button class="action-btn" id="assessment-next" data-action="assessment-next"${rated?'':' disabled'}>${step===CAP.length-1?'Review assessment':'Continue'}</button>
+    ${step>0?`<button class="action-btn secondary" data-action="assessment-back">Back to ${e(AXES[step-1].name)}</button>`:''}
+    <button class="action-btn" data-action="assessment-next">${next?`Next · ${e(next.name)}`:'Review assessment'}</button>
    </div>
   </section>`;
 }
 function moveAssessment(step){
- state.assessmentStep=step;
+ state.assessmentAxis=step;
  save();
  render();
  document.getElementById('assessment-step-heading').focus();
@@ -215,21 +224,15 @@ function clicked(ev){const b=ev.target.closest('[data-action]');if(!b)return;con
   window.SOVEREIGN_CLOUD?.loadPersonal().then(remote=>{
    if(!remote){toast('No personal backup found in your Google Drive.');return;}
    if(!confirm('Replace local capabilities and goals with this cloud backup? Local reflections and reviews are preserved.'))return;
-   state=normalize({...state,...remote,assessmentStep:remote.assessmentStep,reflections:state.reflections,review:state.review});
+   state=normalize({...state,...remote,assessmentAxis:remote.assessmentAxis,assessmentStep:remote.assessmentStep,reflections:state.reflections,review:state.review});
    save();render();toast('Personal profile restored.');
   }).catch(err=>toast('Cloud restore failed: '+err.message));
  }
  else if(action==='go'){location.hash=b.dataset.to;document.getElementById('app').focus();window.scrollTo(0,0)}
  else if(action==='axis'){reviewAxis=b.dataset.axis;render()}
- else if(action==='assessment-back'){moveAssessment(Math.max(0,assessmentStep()-1))}
+ else if(action==='assessment-back'){moveAssessment(Math.max(0,assessmentAxis()-1))}
  else if(action==='assessment-revisit'){moveAssessment(0)}
- else if(action==='assessment-next'||action==='assessment-skip'){
-  const step=assessmentStep(),capability=CAP[step];
-  if(!capability)return;
-  const rated=a(capability.id).current!==null;
-  if(rated!==(action==='assessment-next'))return;
-  moveAssessment(step+1);
- }
+ else if(action==='assessment-next'&&assessmentAxis()<AXES.length){moveAssessment(assessmentAxis()+1)}
  else if(action==='apply-template'){const t=template(state.pendingTemplate);state.targets={...t.targets};state.goal=t.id;state.goalName=t.name;save();render();toast('Aspiration targets updated. Your assessments remain unchanged.')}
  else if(action==='save-snapshot'){state.history.push({date:new Date().toISOString(),name:state.goalName||'Custom direction',goal:state.goal,targets:{...state.targets}});state.history=state.history.slice(-100);save();render();toast('Aspiration snapshot saved.')}
  else if(action==='restore-snapshot'){const snap=state.history[Number(b.dataset.index)];if(!snap)return;if(!confirm('Restore these historical targets? Your current assessment will remain unchanged.'))return;state.targets={...snap.targets};state.goal=snap.goal;state.goalName=snap.name;save();render();toast('Historical targets restored.')}
@@ -241,17 +244,12 @@ function clicked(ev){const b=ev.target.closest('[data-action]');if(!b)return;con
 }
 function changed(ev){const x=ev.target,kind=x.dataset.kind;if(!kind)return;
  if(kind==='assessment'){
-  const step=assessmentStep(),capability=CAP[step];
-  if(!capability||capability.id!==x.dataset.id)return;
-  state.assessmentStep=step;
+  const step=assessmentAxis(),capability=byId(x.dataset.id);
+  if(!capability||capability.axis!==AXES[step]?.id)return;
+  state.assessmentAxis=step;
   const entry=a(capability.id),property=x.dataset.prop;
   entry[property]=property==='current'?asRating(x.value):property==='evidence'?x.value:clamp(x.value,1,5);
   save();
-  if(property==='current'){
-   const rated=entry.current!==null;
-   document.getElementById('assessment-next').disabled=!rated;
-   document.getElementById('assessment-skip').hidden=rated;
-  }
  }
  else if(kind==='target'){state.targets[x.dataset.id]=clamp(x.value,0,4);state.goal='custom';save();render()}
  else if(kind==='template'){state.pendingTemplate=template(x.value).id;save();render()}

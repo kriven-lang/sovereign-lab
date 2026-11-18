@@ -3,11 +3,13 @@
    Client-side hiding is not security. See docs/ORG_SETUP.md. */
 (function(){
 'use strict';
-const state={orgId:'',member:null,reviews:[],selected:null,own:null,other:null,comments:[],members:[],draft:{},assessmentStep:0,editingSummary:false,assessmentError:'',assessmentMessage:'',loading:false,error:'',message:''};
+const state={orgId:'',member:null,reviews:[],selected:null,own:null,other:null,comments:[],members:[],draft:{},assessmentStep:0,editingSummary:false,assessmentError:null,assessmentMessage:'',loading:false,error:'',message:''};
 let sdk=null;
 const cloud=()=>window.SOVEREIGN_CLOUD;
 const me=()=>cloud()?.user;
 const caps=()=>window.SOVEREIGN_DATA?.capabilities||[];
+const axes=()=>window.SOVEREIGN_DATA?.axes||[];
+const axisCaps=id=>caps().filter(capability=>capability.axis===id);
 const rubric=()=>window.SOVEREIGN_RUBRIC;
 const hasScore=entry=>entry?.score!==null&&entry?.score!==undefined&&entry?.score!=='';
 const hasEvidence=entry=>String(entry?.evidence||'').trim().length>=12;
@@ -18,7 +20,7 @@ const isHr=()=>['hr','admin'].includes(state.member?.role);
 const isParticipant=r=>r&&(r.employeeUid===me()?.uid||r.managerUid===me()?.uid);
 function clearSelection(){
  state.selected=null;state.own=null;state.other=null;state.comments=[];state.draft={};
- state.assessmentStep=0;state.editingSummary=false;state.assessmentError='';state.assessmentMessage='';
+ state.assessmentStep=0;state.editingSummary=false;state.assessmentError=null;state.assessmentMessage='';
 }
 function notify(){window.dispatchEvent(new CustomEvent('sovereign-org-change'))}
 function error(err){state.error=err?.message||String(err);state.loading=false;notify();}
@@ -91,8 +93,9 @@ async function openReview(id){
   if(state.selected!==r)return;
   if(mine.exists()){
    state.own=mine.data();state.draft=JSON.parse(JSON.stringify(state.own.ratings||{}));
-   const next=caps().findIndex(c=>!hasScore(state.draft[c.id])||!hasEvidence(state.draft[c.id]));
-   state.assessmentStep=next===-1?caps().length:next;
+   const incomplete=axes().findIndex(axis=>axisCaps(axis.id).some(c=>hasScore(state.draft[c.id])&&!hasEvidence(state.draft[c.id])));
+   const lastRated=axes().findLastIndex(axis=>axisCaps(axis.id).some(c=>hasScore(state.draft[c.id])));
+   state.assessmentStep=incomplete===-1?Math.max(0,lastRated):incomplete;
   }
  }
  if(isParticipant(r)?state.own?.submitted:isHr()){
@@ -136,7 +139,7 @@ async function saveDraft(submit){
  if(state.own?.submitted)throw Error('This submission is locked.');
  const ratings=collectDraft(),keys=Object.keys(ratings);
  if(submit){
-  if(state.assessmentStep!==caps().length)throw Error('Review the assessment before submitting.');
+  if(state.assessmentStep!==axes().length)throw Error('Review the assessment before submitting.');
   if(keys.length<3)throw Error('Assess at least three capabilities before submitting.');
   for(const c of caps())if(ratings[c.id]&&!hasEvidence(ratings[c.id]))throw Error('Provide at least 12 characters of evidence for '+c.name+'.');
   if(!confirm('Submit and permanently lock your independent assessment? You cannot edit it after submission.'))return;
@@ -232,11 +235,11 @@ function assessmentSummary(locked){
  const rated=entries.filter(c=>hasScore(state.draft[c.id]));
  const incomplete=rated.some(c=>!hasEvidence(state.draft[c.id]));
  const issue=rated.length<3?'Assess at least three capabilities before submitting.':incomplete?'Add at least 12 characters of evidence for each assessed capability.':'';
- const rows=entries.map((c,index)=>{
+ const rows=entries.map(c=>{
   const entry=state.draft[c.id];
   const details=hasScore(entry)?'<p>'+esc(entry.evidence||'')+'</p>'+(!hasEvidence(entry)&&!locked?'<p>Supporting evidence needed</p>':''):'';
   return '<div class="list-row"><div><strong>'+esc(c.name)+'</strong><p>'+esc(levelLabel(c.id,entry))+'</p>'+details+'</div>'+
-   (locked?'':'<button class="action-btn secondary" data-org="edit-assessment" data-step="'+index+'" aria-label="Edit '+esc(c.name)+'">Edit</button>')+'</div>';
+   (locked?'':'<button class="action-btn secondary" data-org="edit-assessment" data-id="'+esc(c.id)+'" aria-label="Edit '+esc(c.name)+'">Edit</button>')+'</div>';
  }).join('');
  return '<div class="card">'+
   '<p>'+rated.length+' of '+entries.length+' capabilities assessed.</p>'+rows+
@@ -245,52 +248,58 @@ function assessmentSummary(locked){
   '<button class="action-btn secondary" data-org="save">Save private draft</button>'+
   '<button class="action-btn" data-org="submit"'+(issue?' disabled':'')+'>Submit and lock assessment</button></div>')+'</div>';
 }
-function assessmentQuestion(c){
- const total=caps().length,step=state.assessmentStep,entry=state.draft[c.id]||{};
- const axis=window.SOVEREIGN_DATA?.axes.find(item=>item.id===c.axis);
+function assessmentCapability(c){
+ const entry=state.draft[c.id]||{};
  const evidenceId='org-evidence-'+c.id,ratingId='org-rating-'+c.id;
- const nextLabel=state.editingSummary?'Back to review':step===total-1?'Review assessment':'Continue';
- return '<div class="card assessment-panel"><div class="assessment-progress"><span>'+esc(axis?.name)+'</span><span>Capability '+(step+1)+' of '+total+'</span></div>'+
-  '<progress class="assessment-progress-bar" max="'+total+'" value="'+(step+1)+'" aria-label="Assessment progress"></progress>'+
-  '<div class="assessment-heading"><h3 id="org-assessment-question" tabindex="-1">'+esc(c.name)+'</h3>'+rubric().help(c.id,'org')+'</div><p>'+esc(c.desc)+'</p>'+
+ const headingId='org-capability-'+c.id;
+ const issue=state.assessmentError?.id===c.id;
+ const description=issue?'org-evidence-hint '+evidenceId+'-error':'org-evidence-hint';
+ return '<article class="cap-card" aria-labelledby="'+esc(headingId)+'">'+
+  '<div class="assessment-heading"><h4 id="'+esc(headingId)+'">'+esc(c.name)+'</h4>'+rubric().help(c.id,'org')+'</div><p>'+esc(c.desc)+'</p>'+
   '<div class="field assessment-rating"><label for="'+esc(ratingId)+'">Observed proficiency</label>'+
   '<select class="input" id="'+esc(ratingId)+'" data-org-rating="'+esc(c.id)+'">'+rubric().options(c.id,entry.score)+'</select></div>'+
-  '<div class="field space-top"><label for="'+esc(evidenceId)+'">Evidence from observed work</label>'+
-  '<textarea class="input" id="'+esc(evidenceId)+'" rows="3" maxlength="2000" aria-describedby="org-evidence-hint" data-org-evidence="'+esc(c.id)+'">'+esc(entry.evidence||'')+'</textarea>'+
-  '<p class="hint" id="org-evidence-hint">Include at least 12 characters of specific evidence. Evidence is saved with a selected level.</p></div>'+
-  (state.assessmentError?'<div role="alert">'+notice(state.assessmentError,true)+'</div>':'')+
+  '<div class="field"><label for="'+esc(evidenceId)+'">Evidence from observed work</label>'+
+  '<textarea class="input" id="'+esc(evidenceId)+'" rows="3" maxlength="2000" aria-describedby="'+esc(description)+'"'+(issue?' aria-invalid="true"':'')+' data-org-evidence="'+esc(c.id)+'">'+esc(entry.evidence||'')+'</textarea>'+
+  (issue?'<div id="'+esc(evidenceId)+'-error" role="alert">'+notice('Provide at least 12 characters of evidence for '+c.name+' before continuing.',true)+'</div>':'')+'</div></article>';
+}
+function assessmentAxis(axis){
+ const allAxes=axes(),step=state.assessmentStep,next=allAxes[step+1];
+ const nextLabel=state.editingSummary?'Back to review':next?'Next · '+next.name:'Review assessment';
+ return '<div class="card assessment-axis"><div class="assessment-progress"><span>Axis '+(step+1)+' of '+allAxes.length+'</span></div>'+
+  '<progress class="assessment-progress-bar" max="'+allAxes.length+'" value="'+(step+1)+'" aria-label="Assessment progress"></progress>'+
+  '<h3 id="org-assessment-axis" tabindex="-1">'+esc(axis.name)+'</h3>'+
+  '<p id="org-evidence-hint">Leave a capability as Not assessed if you cannot rate it. Provide at least 12 characters of evidence for each selected level.</p>'+
+  '<div class="cap-list space-top">'+axisCaps(axis.id).map(assessmentCapability).join('')+'</div>'+
   '<div class="btnrow assessment-actions">'+(step?'<button class="action-btn secondary" data-org="previous-assessment">Previous</button>':'')+
-  '<button class="action-btn secondary" id="org-assessment-skip" data-org="skip-assessment"'+(hasScore(entry)?' hidden':'')+'>Leave unassessed</button>'+
   '<button class="action-btn secondary" data-org="save">Save private draft</button>'+
-  '<button class="action-btn" data-org="next-assessment">'+nextLabel+'</button></div></div>';
+  '<button class="action-btn" data-org="next-assessment">'+esc(nextLabel)+'</button></div></div>';
 }
 function assessmentPanel(locked){
- const c=caps()[state.assessmentStep],summary=locked||!c;
+ const axis=axes()[state.assessmentStep],summary=locked||!axis;
  const title=locked?'Your locked assessment':summary?'Review your assessment':'Your independent assessment';
  return '<section class="org-assessment"><div class="section-head"><h2 id="org-assessment-title" tabindex="-1">'+title+'</h2></div>'+
   notice(locked?'Your submission is locked.':'Only you can read this draft until both participants submit.')+
   (state.assessmentMessage?'<div role="status">'+notice(state.assessmentMessage)+'</div>':'')+
-  (summary?assessmentSummary(locked):assessmentQuestion(c))+'</section>';
+  (summary?assessmentSummary(locked):assessmentAxis(axis))+'</section>';
 }
-function editAssessmentStep(step,editingSummary=false){
- state.assessmentStep=step;state.editingSummary=editingSummary;
- state.assessmentError='';state.assessmentMessage='';
- notify();(document.getElementById('org-assessment-question')||document.getElementById('org-assessment-title'))?.focus();
+function editAssessmentStep(step,capability){
+ state.assessmentStep=step;state.editingSummary=Boolean(capability);
+ state.assessmentError=null;state.assessmentMessage='';
+ notify();
+ const focus=capability?'org-rating-'+capability:step===axes().length?'org-assessment-title':'org-assessment-axis';
+ document.getElementById(focus)?.focus();
 }
-function advanceAssessment(skip){
- const c=caps()[state.assessmentStep];
- if(!c)return;
- const entry=state.draft[c.id];
- if(skip){
-  if(hasScore(entry))return;
-  state.draft[c.id]={score:null,evidence:entry?.evidence||''};
- }else if(!hasScore(entry)||!hasEvidence(entry)){
-  state.assessmentError=hasScore(entry)?'Add at least 12 characters of supporting evidence to continue.':'Choose a proficiency level or skip this capability as unassessed.';
+function advanceAssessment(){
+ const axis=axes()[state.assessmentStep];
+ if(!axis)return;
+ const incomplete=axisCaps(axis.id).find(c=>hasScore(state.draft[c.id])&&!hasEvidence(state.draft[c.id]));
+ if(incomplete){
+  state.assessmentError=incomplete;
   notify();
-  document.getElementById((hasScore(entry)?'org-evidence-':'org-rating-')+c.id)?.focus();
+  document.getElementById('org-evidence-'+incomplete.id)?.focus();
   return;
  }
- editAssessmentStep(state.editingSummary?caps().length:state.assessmentStep+1);
+ editAssessmentStep(state.editingSummary?axes().length:state.assessmentStep+1);
 }
 function reviewPanel(){
  const r=state.selected,participant=isParticipant(r),isLocked=state.own?.submitted||r.status==='finalized';
@@ -301,14 +310,11 @@ function reviewPanel(){
 async function run(fn){state.loading=true;state.error='';try{await fn();}catch(err){error(err);return}state.loading=false;notify();}
 document.addEventListener('input',ev=>{
  const x=ev.target, id=x.dataset.orgEvidence||x.dataset.orgRating;
- if(!id||state.loading||!isParticipant(state.selected)||state.selected.status!=='open'||state.own?.submitted||caps()[state.assessmentStep]?.id!==id)return;
+ if(!id||state.loading||!isParticipant(state.selected)||state.selected.status!=='open'||state.own?.submitted)return;
+ if(!axisCaps(axes()[state.assessmentStep]?.id).some(c=>c.id===id))return;
  if(!state.draft[id])state.draft[id]={score:null,evidence:''};
  if(x.dataset.orgEvidence)state.draft[id].evidence=x.value;
- else{
-  state.draft[id].score=x.value===''?null:Number(x.value);
-  const skip=document.getElementById('org-assessment-skip');
-  if(skip)skip.hidden=hasScore(state.draft[id]);
- }
+ else state.draft[id].score=x.value===''?null:Number(x.value);
 });
 document.addEventListener('click',ev=>{
  const b=ev.target.closest('[data-org]');if(!b)return;
@@ -325,8 +331,11 @@ document.addEventListener('click',ev=>{
  if(action==='open')return run(()=>openReview(b.dataset.id));
  if(isParticipant(state.selected)&&state.selected.status==='open'&&!state.own?.submitted){
   if(action==='previous-assessment'&&state.assessmentStep>0)return editAssessmentStep(state.assessmentStep-1);
-  if(action==='next-assessment'||action==='skip-assessment')return advanceAssessment(action==='skip-assessment');
-  if(action==='edit-assessment'&&state.assessmentStep===caps().length&&caps()[Number(b.dataset.step)])return editAssessmentStep(Number(b.dataset.step),true);
+  if(action==='next-assessment')return advanceAssessment();
+  if(action==='edit-assessment'&&state.assessmentStep===axes().length){
+   const capability=caps().find(c=>c.id===b.dataset.id);
+   if(capability)return editAssessmentStep(axes().findIndex(axis=>axis.id===capability.axis),capability.id);
+  }
  }
  if(action==='save')return run(()=>saveDraft(false));
  if(action==='submit')return run(()=>saveDraft(true));

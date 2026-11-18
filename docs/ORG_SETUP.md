@@ -35,8 +35,9 @@ Do not use real personnel data before completing the access-control tests below.
 Draft / editable privately -> Submitted / immutable -> Paired / simultaneously
 visible -> Discussion -> Finalized by HR.
 
-The assessment takes each participant through the competencies in order before
-they can review and lock their submission. Each competency has its own level
+The assessment takes each participant through Thought, Action, and Integrity
+with all capabilities for one axis on each page. Participants can then review
+and lock their submission. Each competency has its own level
 descriptions and evidence guidance. At least three competencies must be rated
 and each rating needs evidence of at least 12 characters. The interface displays
 levels 1–5. Firestore continues to store equivalent scores 0–4 and validates the

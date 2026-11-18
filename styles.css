@@ -144,3 +144,19 @@ body.portal-view #app{max-width:1050px;margin:auto;padding:32px 24px 72px}
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
+.assessment-axis > .section-head {
+  margin-top: 0;
+}
+.assessment-axis .cap-card h3,
+.assessment-axis .cap-card h4 {
+  margin: 0;
+  font-size: 15px;
+}
+.assessment-axis .cap-card .fields {
+  margin-bottom: 0;
+}
+@media (max-width: 520px) {
+  .assessment-axis .cap-card .fields {
+    grid-template-columns: 1fr;
+  }
+}

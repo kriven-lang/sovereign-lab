@@ -7,10 +7,11 @@
   <meta name="description" content="Sovereign Lab: a private, evidence-first capability, aspiration, and development tool." />
   <title>Sovereign Lab — Deliberate development</title>
   <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="sidebar.css" />
 </head>
 <body>
   <div class="shell">
-    <aside class="sidebar" aria-label="Application navigation">
+    <aside class="sidebar" id="workspace-sidebar" aria-label="Application navigation">
       <a class="brand" href="#welcome" aria-label="Sovereign Lab home"><span class="brand-mark">✧</span><span><strong>Sovereign Lab</strong><small>DELIBERATE DEVELOPMENT</small></span></a>
       <div class="side-heading">PERSONAL WORKSPACE</div>
       <nav id="nav" aria-label="Primary navigation">
@@ -28,12 +29,19 @@
       <div class="sidebar-bottom"><span class="status-dot"></span> <span id="account-status">Local first · Optional Google login</span><small>Private reflections and role notes stay local.</small></div>
     </aside>
     <div class="workspace">
-      <header class="topbar"><div class="topbar-location" id="location">PERSONAL STUDIO <span>/</span> Overview</div><div class="topbar-actions"><span class="private-pill">◉ PRIVATE BY DESIGN</span><button class="small-button" data-action="export-personal">Export backup ↗</button></div></header>
+      <header class="topbar">
+        <div class="topbar-start">
+          <button type="button" class="sidebar-toggle" id="sidebar-toggle" aria-controls="workspace-sidebar" aria-expanded="true" aria-label="Hide navigation" hidden><span aria-hidden="true"></span></button>
+          <div class="topbar-location" id="location">PERSONAL STUDIO <span>/</span> Overview</div>
+        </div>
+        <div class="topbar-actions"><span class="private-pill">◉ PRIVATE BY DESIGN</span><button class="small-button" data-action="export-personal">Export backup ↗</button></div>
+      </header>
       <main id="app" tabindex="-1"></main>
       <footer class="footer">Sovereign Lab <span>•</span> A reflective development aid, not a psychometric instrument or an automated employment decision system. <span>v0.3</span></footer>
     </div>
   </div>
   <div class="toast" role="status" aria-live="polite" id="toast"></div>
+  <script src="sidebar.js"></script>
   <script src="firebase-config.js"></script>
 <script src="data.js"></script>
 <script src="rubric.js"></script>

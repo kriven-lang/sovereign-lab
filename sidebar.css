@@ -1,0 +1,64 @@
+.topbar-start {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 12px;
+}
+
+.sidebar-toggle {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 1px solid #45607a;
+  border-radius: 9px;
+  background: transparent;
+  color: #dce8f2;
+}
+
+.sidebar-toggle:hover {
+  background: #26374b;
+}
+
+.sidebar-toggle span {
+  position: relative;
+  width: 19px;
+  height: 15px;
+  border: 1px solid currentColor;
+  border-radius: 3px;
+}
+
+.sidebar-toggle span::before {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 5px;
+  border-right: 1px solid currentColor;
+}
+
+.sidebar-toggle[aria-expanded='true'] span::before {
+  background: currentColor;
+}
+
+.sidebar[hidden],
+.sidebar-toggle[hidden],
+body.portal-view .sidebar-toggle {
+  display: none;
+}
+
+@media (min-width: 691px) {
+  .shell:has(> .sidebar[hidden]) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 690px) {
+  .topbar-start {
+    gap: 8px;
+  }
+  .topbar-actions .small-button {
+    white-space: nowrap;
+  }
+}
