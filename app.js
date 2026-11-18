@@ -135,16 +135,16 @@ function account(){
  '<button class="action-btn secondary" data-action="sign-out">Sign out</button>':
  '<button class="action-btn" data-action="sign-in" '+(status==='connecting'?'disabled':'')+'>Sign in with Google</button>')+
  '</div><p class="footnote space-top">Google identity does not grant a role in any organization.</p></div>'+
- '<div class="card"><div class="axis-label">Private cloud backup</div><h3>Save personal progress across devices</h3>'+
- '<p>Only capabilities, evidence, aspiration targets and practice plans. Excludes private flourishing notes and all workplace review records.</p>'+
- '<div class="btnrow space-top"><button class="action-btn" data-action="cloud-save" '+(!signed?'disabled':'')+'>Save personal profile</button>'+
- '<button class="action-btn secondary" data-action="cloud-load" '+(!signed?'disabled':'')+'>Load cloud profile</button></div>'+
- '<p class="footnote space-top">Cloud uploads happen only when you explicitly choose to save.</p></div></div>'+
+ '<div class="card"><div class="axis-label">Your private Google Drive</div><h3>Save progress across devices</h3>'+
+ '<p>Only your self-assessed capabilities, evidence, aspiration targets and practice plans can be saved to the hidden Sovereign Lab area of your own Google Drive. Reflections and workplace reviews stay local.</p>'+
+ '<div class="btnrow space-top"><button class="action-btn" data-action="cloud-save" '+(!signed?'disabled':'')+'>Save to my Drive</button>'+
+ '<button class="action-btn secondary" data-action="cloud-load" '+(!signed?'disabled':'')+'>Restore from my Drive</button></div>'+
+ '<p class="footnote space-top">Save and restore request narrowly scoped Google Drive app-data permission. Google Drive data remains in your account; no general Drive or Gmail access is requested.</p></div></div>'+
  '<div class="callout"><strong>Organization modules not yet active.</strong> Employee/manager workflows, HR records, recruitment, dashboards and AI need secure server-side access and audit controls before real data can be used.</div>';
 }
 
 function data(){
- return pageIntro('06 / Ownership & privacy','Your data stays <em>yours.</em>','Your free workspace is local-first. Optional Google sign-in and personal cloud backup become available when Firebase is configured. Private reflections and workplace review notes remain local.')+
+ return pageIntro('06 / Ownership & privacy','Your data stays <em>yours.</em>','Your free workspace is local-first. Optional Google sign-in and a backup to your own Google Drive become available when Firebase is configured. Private reflections and workplace review notes remain local.')+
  `<div class="grid grid-2"><div class="card"><div class="axis-label">Personal backup</div><h3>Export your workspace</h3><p>Download all assessments, aspirations, history, journal and local review observations as JSON. Keep this file somewhere private.</p><div class="btnrow space-top"><button class="action-btn" data-action="export-personal">Download complete backup</button></div></div><div class="card"><div class="axis-label">Professional separation</div><h3>Export only the review</h3><p>Produces a role-review file containing observations and the selected role. It excludes aspirations, personal self-ratings and all flourishing reflections.</p><div class="btnrow space-top"><button class="action-btn secondary" data-action="export-review">Download review-only JSON</button></div></div><div class="card"><div class="axis-label">Restore</div><h3>Import a backup</h3><p>Restores a previously exported personal workspace and replaces all data saved in this browser. Export your current workspace first if you want to keep it.</p><div class="btnrow space-top"><label class="action-btn secondary" for="importFile" style="cursor:pointer">Choose backup file</label><input id="importFile" type="file" accept="application/json,.json" style="position:absolute;width:1px;height:1px;opacity:0" /></div></div><div class="card"><div class="axis-label">Reset</div><h3>Remove locally stored entries</h3><p>Deletes the app's saved data from this browser only. Previously downloaded backups are unaffected.</p><div class="btnrow space-top"><button class="action-btn danger" data-action="reset">Clear local workspace</button></div></div></div>`+
  `<div class="callout"><strong>Confidentiality notes:</strong> Browser storage is not encrypted and can be accessed by others using the same browser profile. Avoid entering identifiable employee performance details on shared devices. A public GitHub Pages website publishes the app's code, not browser-stored records; do not commit personal JSON backups to GitHub.</div>`+
  header('Framework boundaries','How to interpret this prototype')+
@@ -167,12 +167,12 @@ function clicked(ev){const b=ev.target.closest('[data-action]');if(!b)return;con
  if(action==='sign-in')window.SOVEREIGN_CLOUD?.signIn().catch(err=>toast('Sign-in failed: '+err.message));
  else if(action==='sign-out')window.SOVEREIGN_CLOUD?.signOut().catch(err=>toast('Sign-out failed: '+err.message));
  else if(action==='cloud-save'){
-  if(!confirm('Save your private capability assessments, evidence and goals to the cloud? Your reflections and role-review notes are excluded.'))return;
+  if(!confirm('Save your personal assessments and goals to your own Google Drive app-data area? Your reflections and role-review notes are excluded.'))return;
   window.SOVEREIGN_CLOUD?.savePersonal(personalCloudWorkspace()).then(()=>toast('Personal profile saved.')).catch(err=>toast('Cloud save failed: '+err.message));
  }
  else if(action==='cloud-load'){
   window.SOVEREIGN_CLOUD?.loadPersonal().then(remote=>{
-   if(!remote){toast('No cloud profile has been saved yet.');return;}
+   if(!remote){toast('No personal backup found in your Google Drive.');return;}
    if(!confirm('Replace local capabilities and goals with this cloud backup? Local reflections and reviews are preserved.'))return;
    state=normalize({...state,...remote,reflections:state.reflections,review:state.review});
    save();render();toast('Personal profile restored.');
