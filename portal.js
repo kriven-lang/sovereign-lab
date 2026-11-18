@@ -35,7 +35,7 @@
     (error?'<div class="notice warning">'+safe(error)+'</div>':'')+
     '<div class="btnrow space-top"><button class="action-btn secondary" data-portal="home">Return home</button></div></div>';
   }else if(window.SOVEREIGN_ORG){
-    mount.innerHTML=window.SOVEREIGN_ORG.render();
+    mount.innerHTML='<div class="btnrow" style="justify-content:flex-end;margin-top:6px"><button class="action-btn secondary" data-portal="logout">Sign out of organization</button></div>'+window.SOVEREIGN_ORG.render();
   }else{
     mount.innerHTML='<div class="portal-hero"><h2>Loading organization workspace…</h2></div>';
   }
@@ -52,6 +52,7 @@
   error='';
   try{
    if(kind==='home'){location.hash='#welcome';render();return}
+   if(kind==='logout'){await window.SOVEREIGN_CLOUD?.signOut();location.hash='#welcome';render();return}
    if(kind==='demo'){
      window.SOVEREIGN_GUEST=true;location.hash='#overview';render();
      window.dispatchEvent(new HashChangeEvent('hashchange'));return;
