@@ -68,3 +68,7 @@ The site stays hosted by GitHub Pages. Google login and manual cloud backups req
 ## Personal Google Drive
 
 As of v0.3, personal cloud saves and restores use the signed-in user's Google Drive hidden `appDataFolder` with a narrowly scoped OAuth grant. Firestore is reserved for the organizational review records. See `docs/GOOGLE_SIGN_IN.md`. These integrations require Firebase/Google Cloud configuration before they will function on the hosted site.
+
+## v0.3 — Independent organization reviews
+
+The organizational review UI includes independent employee/manager drafts, submission locks, comparison after both submissions, attributed reconciliation and HR finalization. The server-enforced access model is in `firestore.rules`. **This is source code for a pilot, not yet an activated organizational service.** Before using any real employee data, follow `docs/ORG_SETUP.md` and validate the Firestore security rules with an emulator. Personal Drive data is not part of organizational review access.
