@@ -1,0 +1,8 @@
+# Keep personal data and local secrets out of version control
+*personal-backup*.json
+*role-review*.json
+*employee*.json
+.env
+.env.*
+.DS_Store
+node_modules/

@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta name="theme-color" content="#101b2a" />
+  <meta name="description" content="Sovereign Lab: a private, evidence-first capability, aspiration, and development tool." />
+  <title>Sovereign Lab — Deliberate development</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar" aria-label="Application navigation">
+      <a class="brand" href="#overview" aria-label="Sovereign Lab home"><span class="brand-mark">✧</span><span><strong>Sovereign Lab</strong><small>DELIBERATE DEVELOPMENT</small></span></a>
+      <div class="side-heading">PERSONAL WORKSPACE</div>
+      <nav id="nav" aria-label="Primary navigation">
+        <a href="#overview" data-page="overview"><span class="nav-ico">▦</span>Overview</a>
+        <a href="#assessment" data-page="assessment"><span class="nav-ico">◎</span>Capability assessment</a>
+        <a href="#aspirations" data-page="aspirations"><span class="nav-ico">⌖</span>Aspirations & targets</a>
+        <a href="#development" data-page="development"><span class="nav-ico">↗</span>Development plan</a>
+        <a href="#reflection" data-page="reflection"><span class="nav-ico">♡</span>Flourishing journal</a>
+        <div class="side-heading inside">PROFESSIONAL TOOLS</div>
+        <a href="#review" data-page="review"><span class="nav-ico">⊞</span>Role review workspace</a>
+        <div class="side-heading inside">WORKSPACE</div>
+        <a href="#data" data-page="data"><span class="nav-ico">⇩</span>Data & privacy</a>
+      </nav>
+      <div class="sidebar-bottom"><span class="status-dot"></span> Local-first · No account needed <small>Your entries stay in this browser unless you export them.</small></div>
+    </aside>
+    <div class="workspace">
+      <header class="topbar"><div class="topbar-location" id="location">PERSONAL STUDIO <span>/</span> Overview</div><div class="topbar-actions"><span class="private-pill">◉ PRIVATE BY DESIGN</span><button class="small-button" data-action="export-personal">Export backup ↗</button></div></header>
+      <main id="app" tabindex="-1"></main>
+      <footer class="footer">Sovereign Lab <span>•</span> A reflective development aid, not a psychometric instrument or an automated employment decision system. <span>v0.1</span></footer>
+    </div>
+  </div>
+  <div class="toast" role="status" aria-live="polite" id="toast"></div>
+  <script src="data.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
